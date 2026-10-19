@@ -1,4 +1,4 @@
-// Send a signed pull_request webhook to the Worker. Usage: npm run simulate -- <scenario 1-4> [action]
+// Send a signed pull_request webhook to the Worker. Usage: npm run simulate -- <scenario 1-6> [action]
 // Scenarios live in scripts/scenarios.mjs. Reads WEBHOOK_URL and GITHUB_WEBHOOK_SECRET from env.
 import crypto from "node:crypto";
 import { SCENARIOS } from "./scenarios.mjs";

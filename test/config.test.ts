@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, parseConfig } from "../src/config";
+import exampleYaml from "../examples/judgement-gate.yml?raw";
 import type { JevAnswers, PrContext } from "../src/types";
 
 const defaults = { confidenceThreshold: 0.75 };
@@ -152,5 +153,12 @@ describe("parseConfig: invalid throws ConfigError", () => {
 
   it("names the offending judgement in the message", () => {
     expect(() => parseConfig(decl({ threshold: 2 }), defaults)).toThrow(/x.*threshold/);
+  });
+});
+
+describe("shipped example", () => {
+  it("examples/judgement-gate.yml parses", () => {
+    const list = parseConfig(exampleYaml, defaults);
+    expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
   });
 });

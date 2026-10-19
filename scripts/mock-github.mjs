@@ -1,9 +1,12 @@
 // Tiny fake GitHub API so the demo works without a GitHub App. Run: npm run mock-github
 // Point the Worker at it with GITHUB_API_URL=http://localhost:8788 (see .dev.vars.example).
 // Scenarios are chosen by PR number (see SCENARIOS) and recorded results are printed to the console.
+import fs from "node:fs";
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 8788);
+// The org judgement config the fake `.github` repo serves. Point MOCK_CONFIG elsewhere to try your own.
+const CONFIG_FILE = process.env.MOCK_CONFIG ?? "examples/judgement-gate.yml";
 
 import { SCENARIOS } from "./scenarios.mjs";
 
@@ -46,6 +49,12 @@ const server = http.createServer(async (req, res) => {
     for (const list of comments.values()) for (const c of list) if (String(c.id) === m[1]) c.body = body.body;
     log(`COMMENT edited #${m[1]}`);
     return send({});
+  }
+  if (req.method === "GET" && /\/repos\/[^/]+\/\.github\/contents\/\.github\/judgement-gate\.yml$/.test(url.pathname)) {
+    if (!fs.existsSync(CONFIG_FILE)) return send({ message: "Not Found" }, 404);
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    log(`CONFIG served ${CONFIG_FILE}`);
+    return res.end(fs.readFileSync(CONFIG_FILE, "utf8"));
   }
   send({ error: "not found" }, 404);
 });

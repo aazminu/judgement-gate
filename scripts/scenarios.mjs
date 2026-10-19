@@ -24,5 +24,16 @@ export const SCENARIOS = {
     body: "Adds suggestions UI.",
     files: [{ filename: "src/search/suggest.ts", status: "added", patch: "@@\n+if (flags.NEW_SEARCH) renderSuggestions();" }],
   },
+  // 5 and 6 need the example org config (examples/judgement-gate.yml), which the mock serves by default.
+  5: {
+    title: "Rename user.name to user.fullName in the API",
+    body: "Cleaner naming.",
+    files: [{ filename: "services/api/v1/users.ts", status: "modified", patch: "@@\n-  name: string;\n+  fullName: string;" }],
+  },
+  6: {
+    title: "Rename user.name to user.fullName in the API (with plan)",
+    body: "Cleaner naming.\n\nMigration Plan: serve both fields for one release, then remove name.",
+    files: [{ filename: "services/api/v1/users.ts", status: "modified", patch: "@@\n-  name: string;\n+  fullName: string;" }],
+  },
 };
 
