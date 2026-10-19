@@ -1,9 +1,11 @@
-import { remediationComment } from "./comment";
+import { aggregate, type JudgementResult } from "./aggregate";
+import { renderComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
-import { evaluatePolicy } from "./policy";
-import type { Env, FetchFn, PullRequestEvent, Verdict } from "./types";
+import { appliesToFiles } from "./glob";
+import { oneWayDoor } from "./judgements/one-way-door";
+import type { Env, FetchFn, Judgement, PullRequestEvent, Verdict } from "./types";
 
 const ACTIONS = new Set(["opened", "synchronize", "reopened", "edited", "ready_for_review"]);
 
@@ -45,36 +47,47 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
 
   try {
     const ctx = assembleContext(ev, files);
-    const jev = await evaluate(
-      ctx,
-      {
-        apiKey: env.JEV_API_KEY,
-        url: env.JEV_API_URL ?? "https://openrouter.ai/api/alpha/decisions",
-        model: env.JEV_MODEL ?? "typesafe/jev-1.14",
-        timeoutMs: Number(env.JEV_TIMEOUT_MS ?? 2500),
-      },
-      fetchFn,
-    );
-    const verdict = evaluatePolicy(jev, files, { confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) });
+    const all: Judgement[] = [oneWayDoor({ confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) })];
+    const applicable = all.filter((j) => appliesToFiles(j.appliesTo, files));
+
+    let results: JudgementResult[] = [];
+    if (applicable.length > 0) {
+      const answers = await evaluate(
+        ctx,
+        applicable,
+        {
+          apiKey: env.JEV_API_KEY,
+          url: env.JEV_API_URL ?? "https://openrouter.ai/api/alpha/decisions",
+          model: env.JEV_MODEL ?? "typesafe/jev-1.14",
+          timeoutMs: Number(env.JEV_TIMEOUT_MS ?? 2500),
+        },
+        fetchFn,
+      );
+      results = applicable.map((judgement) => ({ judgement, verdict: judgement.decide(answers[judgement.id], ctx) }));
+    }
+    const verdict = aggregate(results);
     const shadow = (env.MODE ?? "shadow") === "shadow";
 
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
     let commentNote = "";
-    if (verdict.conclusion === "failure") {
+    const failing = results.filter((r) => r.verdict.conclusion === "failure");
+    if (failing.length > 0) {
       try {
-        await gh.upsertComment(owner, repo, pr, remediationComment(verdict, jev, owner, repo, ev.pull_request.head.sha));
+        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }));
       } catch (e) {
         console.error("judgement-gate comment failed", e);
         commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
       }
     }
+    const lines = results.map((r) => `- ${r.verdict.conclusion === "success" ? "pass" : "FAIL"}: ${r.judgement.name} (${r.verdict.summary})`);
+    const detail = lines.length > 0 ? `${verdict.summary}\n\n${lines.join("\n")}` : verdict.summary;
     await gh.completeCheckRun(
       owner,
       repo,
       check.id,
       shadow ? "success" : verdict.conclusion,
       shadow ? `[Shadow] ${verdict.summary}` : verdict.summary,
-      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${verdict.summary}` : verdict.summary) + commentNote,
+      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${detail}` : detail) + commentNote,
     );
     return verdict;
   } catch (e) {

@@ -84,6 +84,8 @@ export interface Judgement {
   name: string;
   /** Globs against changed filenames; omitted means the judgement always applies. */
   appliesTo?: string[];
+  /** Send question keys without the `${id}.` prefix. Only the built-in one-way-door uses this, to keep its original Jev contract. */
+  unprefixedKeys?: boolean;
   questions: Record<string, JevQuestion>;
   decide(answers: JevAnswers, pr: PrContext): JudgementVerdict;
   remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };

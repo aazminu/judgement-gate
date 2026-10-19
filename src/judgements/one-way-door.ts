@@ -26,6 +26,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
     id: "one-way-door",
     name: "One-way door",
     appliesTo: opts.appliesTo,
+    unprefixedKeys: true,
     questions: {
       is_one_way_boundary_mutation: {
         type: "noul",
