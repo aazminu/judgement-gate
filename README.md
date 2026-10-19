@@ -1,8 +1,8 @@
 # judgement-gate
 
-Org-wide pull request gate on a Cloudflare Worker (free tier). A GitHub App sends `pull_request` webhooks; the Worker asks TypeSafe's Jev model (via OpenRouter) whether the change is a one-way door and posts a `judgement-gate` check run. No files needed in any repo.
+Org-wide pull request gate on a Cloudflare Worker (free tier). A GitHub App sends `pull_request` webhooks; the Worker asks TypeSafe's Jev model (via OpenRouter) a set of **judgements** about the change and posts one `judgement-gate` check run. No files needed in any repo.
 
-Type 1 (one-way) changes need an ADR in `docs/decisions/*.md`. Type 2 (reversible) changes need a Reversal Trigger and Rollback Path in the PR body. Failures get one remediation comment, edited in place on later pushes.
+A judgement is a named question, a threshold, a way for the author to clear it, and a remedy that explains why it matters and what to do. Out of the box there is one: `one-way-door`. Type 1 (one-way) changes need an ADR in `docs/decisions/*.md`; Type 2 (reversible) changes need a Reversal Trigger and Rollback Path in the PR body. Add your own in YAML (see [Judgements](#judgements)). Failures get one remediation comment, edited in place on later pushes, with a "why" and a "fix" per judgement.
 
 ## Demo in 2 minutes (no GitHub App needed)
 
@@ -22,14 +22,20 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 | 2 | same, with `docs/decisions/*.md` | SUCCESS |
 | 3 | flagged feature, has reversal plan | SUCCESS |
 | 4 | flagged feature, no plan | FAILURE + 3-line comment |
+| 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too) |
+| 6 | same, with `Migration Plan:` in the body | API-contract judgement passes. One-way door can still say "Ambiguous" and fail the check, because Jev is unsure whether a plain rename is a one-way door (classification confidence about 0.5 against the 0.75 threshold) |
+
+Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Lowering `CONFIDENCE_THRESHOLD` (or `confidence_threshold` on `use: one-way-door`) is what makes borderline PRs like this pass; tune it in shadow mode.
+
+The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own. Scenarios 1-4 also show `applies_to` at work: the API judgement is skipped because no changed file is under `services/api/`.
 
 Check results and comments print in the mock-github terminal. Edit `scripts/scenarios.mjs` to add your own.
 
-`npm run jev-smoke` calls Jev directly to verify your key. `npm test` runs 19 unit and end-to-end tests with fake GitHub and Jev. `npm run typecheck` runs tsc.
+`npm run jev-smoke` calls Jev directly to verify your key. `npm test` runs the unit and end-to-end tests with fake GitHub and Jev. `npm run typecheck` runs tsc.
 
 ## Deploy for real
 
-1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments), subscribe to **Pull request**. Install it on the org or a test repo.
+1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments), **Contents: read** (to read the org judgement config), subscribe to **Pull request**. Install it on the org or a test repo. If you use org-level judgements, include the org's `.github` repo in the installation. Adding Contents: read to an existing install means the org must accept the permission update.
 2. Convert the downloaded key to PKCS#8 (Web Crypto cannot import the PKCS#1 key GitHub gives you):
    `openssl pkcs8 -topk8 -nocrypt -in app.pem -out app-pkcs8.pem`
 3. Set secrets, then deploy:
@@ -40,6 +46,34 @@ Check results and comments print in the mock-github terminal. Edit `scripts/scen
    npx wrangler secret put JEV_API_KEY        # your OpenRouter key
    npx wrangler deploy
    ```
+
+## Judgements
+
+A judgement is what the gate asks about a change. The Worker sends every applicable judgement to Jev in one request, then posts one check and one comment.
+
+**No config needed.** Without a config file, the built-in `one-way-door` judgement runs and reaches the same verdicts as before. The comment wording is now a "Why" and a "Fix", and the check summary lists each judgement.
+
+**Add your own.** Create `.github/judgement-gate.yml` in your organisation's `.github` repo (repo name overridable with `CONFIG_REPO`). Protect it with CODEOWNERS and branch protection that requires Code Owner review on that repo's default branch: whoever approves changes to that file owns the org's judgement. It is always read from the **default branch**, so a PR cannot change the rules that gate it. See [examples/judgement-gate.yml](examples/judgement-gate.yml).
+
+| Key | Meaning |
+|---|---|
+| `use` | Enable a built-in (`one-way-door`). Only `confidence_threshold` and `applies_to` may be overridden. |
+| `id`, `name` | Unique id (kebab-case) and the name shown in the comment. |
+| `question`, `true`, `false` | The yes/no question for Jev, and what each answer means. |
+| `threshold` | 0 to 1. Flagged when the probability of "true" is at least this. |
+| `applies_to` | Optional globs (`*`, `**`, `?`). Judged only if a changed file matches. Omit for always. |
+| `satisfied_by` | Required. Any one entry clears the flag: `pr_body_matches` (regex, `(?i)` prefix for case-insensitive, max 200 chars) or `file_added` (glob on an added or modified file). |
+| `why`, `fix` | The remedy shown to the author: why it matters, and what to do. |
+
+**A non-empty list replaces the default.** If you list only your own judgement, `one-way-door` stops running org-wide. Add `- use: one-way-door` to keep it.
+
+**If the config is wrong.** A missing file, an empty file, or `judgements: []` runs the built-in default. An unknown key (at the top level or inside a judgement, for example a typo like `judgement:` or `applies-to:`) is a config error rather than being ignored. A YAML or schema error, or a config that cannot be read (for example a missing Contents permission), also falls back to the built-in, and the check summary says so. A bad config never blocks a PR.
+
+**Config not picked up?** GitHub answers 404 for a repo the app cannot see, which looks the same as "no config file". If your judgements never run, check that the org's `.github` repo is part of the app installation (not just "selected repositories" without it).
+
+**Cost.** One extra GitHub request per event. The Worker also asks the Cloudflare Cache API to hold the config for 60 seconds, but the Cache API does nothing on `*.workers.dev` domains, so budget one request per event unless you deploy on a custom domain. On a custom domain, a new or changed config can take up to 60 seconds to apply.
+
+**Regex caution.** `pr_body_matches` patterns run against PR bodies written by anyone. Keep them simple: a pattern with nested repeats can run for a very long time on a crafted body, which can stop the Worker mid-run and leave the check stuck at "in progress".
 
 ## Rollout modes
 

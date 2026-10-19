@@ -9,6 +9,7 @@ export interface Env {
   JEV_TIMEOUT_MS?: string;
   GITHUB_API_URL?: string;
   CONFIDENCE_THRESHOLD?: string;
+  CONFIG_REPO?: string;
 }
 
 export type FetchFn = typeof fetch;
@@ -54,5 +55,39 @@ export interface JevResult {
 export type Verdict = {
   conclusion: "success" | "failure" | "neutral";
   summary: string;
-  reason: "type1_adr" | "type1_no_adr" | "ambiguous" | "type2_ok" | "type2_no_plan" | "degraded";
+  reason: string;
 };
+
+export interface JevQuestion {
+  type: "noul" | "choice";
+  instructions: string;
+  criteria: Record<string, string>;
+}
+
+export type JevAnswers = Record<string, { noul?: number; choice?: string; confidence?: number }>;
+
+export interface JudgementVerdict {
+  conclusion: "success" | "failure";
+  reason: string;
+  summary: string;
+  signals?: string;
+}
+
+export interface RemedyContext {
+  owner: string;
+  repo: string;
+  headRef: string;
+}
+
+/** A named question for the model, a decision rule, and a remedy that teaches the author. */
+export interface Judgement {
+  id: string;
+  name: string;
+  /** Globs against changed filenames; omitted means the judgement always applies. */
+  appliesTo?: string[];
+  /** Send question keys without the `${id}.` prefix. Only the built-in one-way-door uses this, to keep its original Jev contract. */
+  unprefixedKeys?: boolean;
+  questions: Record<string, JevQuestion>;
+  decide(answers: JevAnswers, pr: PrContext): JudgementVerdict;
+  remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };
+}

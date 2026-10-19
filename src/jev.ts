@@ -1,4 +1,4 @@
-import type { FetchFn, JevResult, PrContext } from "./types";
+import type { FetchFn, JevAnswers, JevQuestion, Judgement, PrContext } from "./types";
 
 export class JevTimeout extends Error {}
 
@@ -9,7 +9,13 @@ export interface JevConfig {
   timeoutMs: number;
 }
 
-export function buildRequest(ctx: PrContext, model: string) {
+export const questionKey = (j: Judgement, key: string) => (j.unprefixedKeys ? key : `${j.id}.${key}`);
+
+export function buildRequest(ctx: PrContext, model: string, judgements: Judgement[]) {
+  const questions: Record<string, JevQuestion> = {};
+  for (const j of judgements) {
+    for (const [key, q] of Object.entries(j.questions)) questions[questionKey(j, key)] = q;
+  }
   return {
     model,
     state: {
@@ -19,53 +25,16 @@ export function buildRequest(ctx: PrContext, model: string) {
       changed_files: ctx.files.map((f) => `${f.status} ${f.filename}`),
       diff: ctx.patchExtract,
     },
-    questions: {
-      is_one_way_boundary_mutation: {
-        type: "noul",
-        instructions:
-          "Does this pull request make a one-way-door change: a persistent database/schema change, an authentication or authorization refactor, or an infrastructure topology shift that cannot easily be undone?",
-        criteria: {
-          true: "alters persistent schema or data, auth model, or infrastructure topology in a way that is hard to reverse",
-          false: "no persistent, auth or infrastructure boundary mutation",
-        },
-      },
-      is_additive_or_isolated: {
-        type: "noul",
-        instructions: "Is this change strictly additive and non-breaking, or isolated behind an adapter or feature flag?",
-        criteria: {
-          true: "only adds behaviour, or is guarded by a flag/adapter so existing behaviour is unchanged",
-          false: "modifies or removes existing behaviour without a guard",
-        },
-      },
-      has_concrete_reversal_plan: {
-        type: "noul",
-        instructions:
-          "Does the pull request description state BOTH a concrete reversal trigger (an operational signal that says to roll back) AND a rollback procedure?",
-        criteria: {
-          true: "description names a trigger condition and the steps to roll back",
-          false: "no trigger, or no rollback steps, or only vague statements",
-        },
-      },
-      synthetic_classification: {
-        type: "choice",
-        instructions: "Classify this change as a one-way door (hard to reverse) or a two-way door (easy to reverse).",
-        criteria: {
-          TYPE_1_ONE_WAY_DOOR: "irreversible, schema-altering, or infrastructure-critical",
-          TYPE_2_TWO_WAY_DOOR: "easily reversible by revert or flag flip",
-        },
-      },
-    },
+    questions,
   };
 }
 
-interface Answers {
-  is_one_way_boundary_mutation?: { noul?: number };
-  is_additive_or_isolated?: { noul?: number };
-  has_concrete_reversal_plan?: { noul?: number };
-  synthetic_classification?: { choice?: string; confidence?: number };
-}
-
-export async function evaluate(ctx: PrContext, cfg: JevConfig, fetchFn: FetchFn): Promise<JevResult> {
+export async function evaluate(
+  ctx: PrContext,
+  judgements: Judgement[],
+  cfg: JevConfig,
+  fetchFn: FetchFn,
+): Promise<Record<string, JevAnswers>> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), cfg.timeoutMs);
   let res: Response;
@@ -73,7 +42,7 @@ export async function evaluate(ctx: PrContext, cfg: JevConfig, fetchFn: FetchFn)
     res = await fetchFn(cfg.url, {
       method: "POST",
       headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(buildRequest(ctx, cfg.model)),
+      body: JSON.stringify(buildRequest(ctx, cfg.model, judgements)),
       signal: ctl.signal,
     });
   } catch (e) {
@@ -83,21 +52,20 @@ export async function evaluate(ctx: PrContext, cfg: JevConfig, fetchFn: FetchFn)
     clearTimeout(timer);
   }
   if (!res.ok) throw new Error(`Jev -> ${res.status} ${await res.text()}`);
-  const a = ((await res.json()) as { answers: Answers }).answers;
-  const cls = a.synthetic_classification;
-  if (
-    a.is_one_way_boundary_mutation?.noul == null ||
-    a.is_additive_or_isolated?.noul == null ||
-    a.has_concrete_reversal_plan?.noul == null ||
-    !cls?.choice
-  ) {
-    throw new Error("Jev response missing expected answers");
+  const raw = ((await res.json()) as { answers?: JevAnswers }).answers ?? {};
+
+  const out: Record<string, JevAnswers> = {};
+  for (const j of judgements) {
+    out[j.id] = {};
+    for (const [key, q] of Object.entries(j.questions)) {
+      const a = raw[questionKey(j, key)];
+      const ok =
+        q.type === "noul"
+          ? typeof a?.noul === "number" && a.noul >= 0 && a.noul <= 1
+          : typeof a?.choice === "string" && a.choice !== "" && (a.confidence === undefined || typeof a.confidence === "number");
+      if (!ok) throw new Error("Jev response missing expected answers");
+      out[j.id][key] = a;
+    }
   }
-  return {
-    oneWayProb: a.is_one_way_boundary_mutation.noul,
-    additiveProb: a.is_additive_or_isolated.noul,
-    reversalProb: a.has_concrete_reversal_plan.noul,
-    classification: cls.choice === "TYPE_1_ONE_WAY_DOOR" ? "TYPE_1_ONE_WAY_DOOR" : "TYPE_2_TWO_WAY_DOOR",
-    classificationConfidence: cls.confidence ?? 0,
-  };
+  return out;
 }
