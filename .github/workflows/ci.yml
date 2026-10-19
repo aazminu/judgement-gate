@@ -1,0 +1,44 @@
+name: CI
+
+# Runs on fork PRs too, so it is deliberately unprivileged: plain `pull_request`
+# (never `pull_request_target`), read-only token, no secrets, no deploy step.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Bundles the Worker without deploying; needs no Cloudflare credentials.
+      - name: Wrangler dry-run build
+        run: npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/out"
