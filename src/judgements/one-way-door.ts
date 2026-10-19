@@ -3,6 +3,20 @@ import type { Judgement, JevAnswers, JevResult, JudgementVerdict } from "../type
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 const FENCE = "```";
+const REVERSAL_TEMPLATE = [
+  "Reversal Trigger: <signal that tells us to roll back, e.g. error rate > 2% for 5 min>",
+  "Rollback Path: <exact steps, e.g. revert this PR, or set flag X=off>",
+  "Owner: <who acts on the trigger>",
+].join("\n");
+const ADR_TEMPLATE = [
+  "# NNNN: <short title>",
+  "",
+  "## Context",
+  "## Decision",
+  "## Alternatives considered",
+  "## Consequences",
+  "## Rollback limits",
+].join("\n");
 
 function toJevResult(a: JevAnswers): JevResult {
   const cls = a.synthetic_classification;
@@ -91,9 +105,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
               "Add these three lines to the PR description:",
               "",
               FENCE,
-              "Reversal Trigger: <signal that tells us to roll back, e.g. error rate > 2% for 5 min>",
-              "Rollback Path: <exact steps, e.g. revert this PR, or set flag X=off>",
-              "Owner: <who acts on the trigger>",
+              REVERSAL_TEMPLATE,
               FENCE,
             ].join("\n"),
           };
@@ -102,6 +114,18 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
             why: "The model could not confidently size the blast radius of this change.",
             fix: "Request a human peer review, or document the decision in an ADR under `docs/decisions/`.",
           };
+      }
+    },
+    agent(v, rc) {
+      const adr = { type: "file_added" as const, glob: "docs/decisions/*.md", example_path: "docs/decisions/0001-title.md" };
+      const fields = { type: "pr_body_fields" as const, fields: ["Reversal Trigger", "Rollback Path"], template: REVERSAL_TEMPLATE };
+      switch (v.reason) {
+        case "type1_no_adr":
+          return { satisfied_by: [adr], suggested_template: { target: "file", path: adr.example_path, content: ADR_TEMPLATE } };
+        case "type2_no_plan":
+          return { satisfied_by: [fields], suggested_template: { target: "pr_body", content: REVERSAL_TEMPLATE } };
+        default:
+          return { threshold: confidenceThreshold, satisfied_by: [adr, fields], suggested_template: { target: "file", path: adr.example_path, content: ADR_TEMPLATE } };
       }
     },
   };
