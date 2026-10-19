@@ -59,7 +59,10 @@ export async function evaluate(
     out[j.id] = {};
     for (const [key, q] of Object.entries(j.questions)) {
       const a = raw[questionKey(j, key)];
-      const ok = q.type === "noul" ? typeof a?.noul === "number" : typeof a?.choice === "string" && a.choice !== "";
+      const ok =
+        q.type === "noul"
+          ? typeof a?.noul === "number" && a.noul >= 0 && a.noul <= 1
+          : typeof a?.choice === "string" && a.choice !== "" && (a.confidence === undefined || typeof a.confidence === "number");
       if (!ok) throw new Error("Jev response missing expected answers");
       out[j.id][key] = a;
     }

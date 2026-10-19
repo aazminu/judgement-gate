@@ -162,3 +162,20 @@ describe("shipped example", () => {
     expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
   });
 });
+
+describe("review fixes", () => {
+  it("`judgements:` with no value is the default, not an error", () => {
+    expect(parseConfig("judgements:\n", defaults).map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(parseConfig("judgements:\n  # - use: one-way-door\n", defaults).map((j) => j.id)).toEqual(["one-way-door"]);
+  });
+  it("rejects unknown keys on a declarative judgement (a typo must not silently widen scope)", () => {
+    expect(() => parseConfig(decl({ "applies-to": ["services/**"] }), defaults)).toThrow(/applies-to/);
+  });
+  it("rejects an empty applies_to list", () => {
+    expect(() => parseConfig(decl({ applies_to: [] }), defaults)).toThrow(ConfigError);
+  });
+  it("requires a kebab-case id", () => {
+    expect(() => parseConfig(decl({ id: "Bad Id" }), defaults)).toThrow(/id/);
+    expect(() => parseConfig(decl({ id: "good-id-2" }), defaults)).not.toThrow();
+  });
+});

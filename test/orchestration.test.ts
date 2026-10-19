@@ -74,3 +74,18 @@ describe("aggregate", () => {
     expect(aggregate([pass(stub("a")), pass(stub("b"))]).conclusion).toBe("success");
   });
 });
+
+describe("jev answer validation", () => {
+  it("rejects a noul outside 0..1", async () => {
+    await expect(evaluate(pr, [stub("a")], cfg, jevReturning({ "a.q": { noul: 1.5 } }))).rejects.toThrow("missing expected answers");
+  });
+  it("rejects a non-numeric confidence on a choice answer", async () => {
+    const choice: Judgement = {
+      ...stub("c"),
+      questions: { k: { type: "choice", instructions: "pick", criteria: { A: "a", B: "b" } } },
+    };
+    await expect(evaluate(pr, [choice], cfg, jevReturning({ "c.k": { choice: "A", confidence: "high" } }))).rejects.toThrow(
+      "missing expected answers",
+    );
+  });
+});

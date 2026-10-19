@@ -20,7 +20,9 @@ function str(o: Obj, key: string, where: string): string {
 
 function globs(v: unknown, where: string): string[] | undefined {
   if (v === undefined) return undefined;
-  if (!Array.isArray(v) || v.some((g) => typeof g !== "string")) throw new ConfigError(`${where}: "applies_to" must be a list of strings`);
+  if (!Array.isArray(v) || v.length === 0 || v.some((g) => typeof g !== "string" || g === "")) {
+    throw new ConfigError(`${where}: "applies_to" must be a non-empty list of glob strings (omit it to always apply)`);
+  }
   return v as string[];
 }
 
@@ -46,13 +48,20 @@ function satisfiedBy(v: unknown, where: string): SatisfiedBy[] {
   });
 }
 
+const DECLARATIVE_KEYS = new Set(["id", "name", "question", "true", "false", "threshold", "applies_to", "satisfied_by", "why", "fix"]);
+const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
 function declarative(o: Obj, where: string): DeclarativeSpec {
+  const unknown = Object.keys(o).filter((k) => !DECLARATIVE_KEYS.has(k));
+  if (unknown.length > 0) throw new ConfigError(`${where}: unknown key ${unknown.map((k) => `"${k}"`).join(", ")}`);
+  const id = str(o, "id", where);
+  if (!KEBAB.test(id)) throw new ConfigError(`${where}: "id" must be kebab-case (lowercase letters, digits, hyphens)`);
   const threshold = o.threshold;
   if (typeof threshold !== "number" || !(threshold >= 0 && threshold <= 1)) {
     throw new ConfigError(`${where}: "threshold" must be a number between 0 and 1`);
   }
   return {
-    id: str(o, "id", where),
+    id,
     name: str(o, "name", where),
     question: str(o, "question", where),
     whenTrue: str(o, "true", where),
@@ -79,7 +88,7 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
   const fallback = () => [builtinById("one-way-door", {}, defaults)!];
   if (doc === null || doc === undefined) return fallback();
   if (!isObj(doc)) throw new ConfigError("config root must be a mapping");
-  if (doc.judgements === undefined) return fallback();
+  if (doc.judgements === undefined || doc.judgements === null) return fallback();
   if (!Array.isArray(doc.judgements)) throw new ConfigError('"judgements" must be a list');
   if (doc.judgements.length === 0) return fallback();
 
