@@ -129,19 +129,42 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
 
 export const CONFIG_PATH = ".github/judgement-gate.yml";
 const CACHE_SECONDS = 60;
+const CACHE_TTL_MS = CACHE_SECONDS * 1000;
 
-async function readConfigText(gh: GitHubClient, owner: string, repo: string): Promise<string | null> {
+interface CachedConfig {
+  text: string | null;
+  expiresAt: number;
+}
+
+const configCache = new Map<string, CachedConfig>();
+
+export function clearConfigCache(): void {
+  configCache.clear();
+}
+
+async function readConfigText(gh: GitHubClient, owner: string, repo: string, now = Date.now()): Promise<string | null> {
+  const cacheKey = `${owner}/${repo}`;
+  const memo = configCache.get(cacheKey);
+  if (memo && memo.expiresAt > now) {
+    return memo.text;
+  }
+
   const cache = typeof caches !== "undefined" ? ((caches as unknown as { default?: Cache }).default ?? null) : null;
   const key = new Request(`https://judgement-gate.invalid/config/${owner}/${repo}`);
   if (cache) {
     try {
       const hit = await cache.match(key);
-      if (hit) return (await hit.text()) || null;
+      if (hit) {
+        const cachedText = (await hit.text()) || null;
+        configCache.set(cacheKey, { text: cachedText, expiresAt: now + CACHE_TTL_MS });
+        return cachedText;
+      }
     } catch {
       // cache is best-effort
     }
   }
   const text = await gh.getFileContents(owner, repo, CONFIG_PATH);
+  configCache.set(cacheKey, { text, expiresAt: now + CACHE_TTL_MS });
   if (cache) {
     try {
       await cache.put(key, new Response(text ?? "", { headers: { "Cache-Control": `max-age=${CACHE_SECONDS}` } }));
@@ -156,13 +179,18 @@ async function readConfigText(gh: GitHubClient, owner: string, repo: string): Pr
  * Load the org's judgements from the default branch of <owner>/<CONFIG_REPO>. Never throws: a missing
  * file means the default built-ins, and an unreadable or invalid file means the same plus a note.
  */
-export async function loadJudgements(gh: GitHubClient, owner: string, env: Env): Promise<{ judgements: Judgement[]; note?: string }> {
+export async function loadJudgements(
+  gh: GitHubClient,
+  owner: string,
+  env: Env,
+  now = Date.now(),
+): Promise<{ judgements: Judgement[]; note?: string }> {
   const defaults = { confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) };
   const repo = env.CONFIG_REPO ?? ".github";
   const fallback = () => parseConfig("", defaults);
   let text: string | null;
   try {
-    text = await readConfigText(gh, owner, repo);
+    text = await readConfigText(gh, owner, repo, now);
   } catch (e) {
     return { judgements: fallback(), note: `Could not read judgement config (${(e as Error).message}); fell back to built-in judgements.` };
   }
@@ -174,3 +202,4 @@ export async function loadJudgements(gh: GitHubClient, owner: string, env: Env):
     return { judgements: fallback(), note: `Config error: ${e.message}; fell back to built-in judgements.` };
   }
 }
+

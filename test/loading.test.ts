@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearConfigCache } from "../src/config";
 import { processPullRequest } from "../src/handler";
 import type { Env, PullRequestEvent } from "../src/types";
+
+beforeEach(() => {
+  clearConfigCache();
+});
+
+afterEach(() => {
+  clearConfigCache();
+  vi.restoreAllMocks();
+});
 
 const CONFIG = `
 judgements:
@@ -130,6 +140,36 @@ describe("config loading", () => {
     const out = finalCheck(net.calls);
     expect(out.conclusion).toBe("failure");
     expect(out.output.summary).toContain("Config error");
+  });
+
+  it("caches config in the isolate for 60 seconds and refetches after expiry", async () => {
+    const env = await makeEnv();
+    const net = fakeNet({ config: { status: 200, body: CONFIG }, answers: benign });
+    let now = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+
+    await processPullRequest(prEvent(), env, net.fetchFn);
+    now += 30_000;
+    await processPullRequest(prEvent(), env, net.fetchFn);
+
+    expect(net.calls.filter((c) => c.url.includes("/contents/"))).toHaveLength(1);
+
+    now += 31_000;
+    await processPullRequest(prEvent(), env, net.fetchFn);
+
+    expect(net.calls.filter((c) => c.url.includes("/contents/"))).toHaveLength(2);
+  });
+
+  it("keys the isolate config cache by owner and config repo", async () => {
+    const net = fakeNet({ config: { status: 404 }, answers: benign });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    await processPullRequest(prEvent(), await makeEnv({ CONFIG_REPO: "policy" }), net.fetchFn);
+
+    const configUrls = net.calls.filter((c) => c.url.includes("/contents/")).map((c) => c.url);
+    expect(configUrls).toEqual([
+      "https://gh.test/repos/o/.github/contents/.github/judgement-gate.yml",
+      "https://gh.test/repos/o/policy/contents/.github/judgement-gate.yml",
+    ]);
   });
 });
 
