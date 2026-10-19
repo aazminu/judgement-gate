@@ -14,3 +14,8 @@ CONFIDENCE_THRESHOLD = "0.75"
 # Repo (in the PR's owner) that holds .github/judgement-gate.yml. Read from its default branch.
 CONFIG_REPO = ".github"
 # Secrets (wrangler secret put): GITHUB_WEBHOOK_SECRET, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY (PKCS#8 PEM), JEV_API_KEY
+
+# Optional: calibration events (see docs/calibration.md). Remove this block to disable; the Worker runs fine without it.
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "judgement_gate"

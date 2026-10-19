@@ -10,6 +10,12 @@ export interface Env {
   GITHUB_API_URL?: string;
   CONFIDENCE_THRESHOLD?: string;
   CONFIG_REPO?: string;
+  /** Workers Analytics Engine dataset. Optional: without it nothing is recorded. */
+  ANALYTICS?: AnalyticsSink;
+}
+
+export interface AnalyticsSink {
+  writeDataPoint(point: { indexes?: string[]; blobs?: string[]; doubles?: number[] }): void;
 }
 
 export type FetchFn = typeof fetch;
@@ -27,6 +33,14 @@ export interface PullRequestEvent {
     head: { sha: string };
   };
   changes?: { title?: unknown; body?: unknown; base?: unknown };
+}
+
+export interface IssueCommentEvent {
+  action: string;
+  installation?: { id: number };
+  repository: { name: string; owner: { login: string } };
+  issue: { number: number; pull_request?: unknown };
+  comment: { body: string; user: { type: string }; author_association?: string };
 }
 
 export interface ChangedFile {
@@ -71,6 +85,8 @@ export interface JudgementVerdict {
   reason: string;
   summary: string;
   signals?: string;
+  /** Numbers for calibration logging only; never affects the verdict. */
+  metrics?: { probability?: number; confidence?: number; cleared?: boolean };
 }
 
 export interface RemedyContext {

@@ -70,6 +70,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
         conclusion: v.conclusion === "success" ? "success" : "failure",
         reason: v.reason,
         summary: v.summary,
+        metrics: { probability: j.oneWayProb, confidence: j.classificationConfidence, cleared: v.reason === "type1_adr" },
         signals: `Signals: one-way boundary ${pct(j.oneWayProb)}, additive/isolated ${pct(j.additiveProb)}, reversal plan ${pct(j.reversalProb)}, classified ${j.classification} (confidence ${j.classificationConfidence.toFixed(2)}).`,
       };
     },
