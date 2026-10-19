@@ -32,6 +32,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === "PATCH" && /\/check-runs\/\d+$/.test(url.pathname)) {
     log(`CHECK  ${body.conclusion.toUpperCase().padEnd(8)} ${body.output.title}`);
+    for (const line of (body.output.summary ?? "").split("\n").filter(Boolean)) console.log("         | " + line);
     return send({});
   }
   if ((m = url.pathname.match(/\/pulls\/(\d+)\/files$/))) {
