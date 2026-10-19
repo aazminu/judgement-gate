@@ -1,0 +1,246 @@
+import { describe, expect, it } from "vitest";
+import { verifySignature } from "../src/crypto";
+import { handleWebhook, processPullRequest } from "../src/handler";
+import { buildPatchExtract } from "../src/github";
+import { evaluatePolicy } from "../src/policy";
+import type { Env, JevResult, PullRequestEvent } from "../src/types";
+
+const j = (o: Partial<JevResult> = {}): JevResult => ({
+  oneWayProb: 0.05,
+  additiveProb: 0.9,
+  reversalProb: 0.9,
+  classification: "TYPE_2_TWO_WAY_DOOR",
+  classificationConfidence: 0.9,
+  ...o,
+});
+const opts = { confidenceThreshold: 0.75 };
+const adr = [{ filename: "docs/decisions/0001-x.md", status: "added" }];
+const src = [{ filename: "src/a.ts", status: "modified" }];
+
+describe("policy", () => {
+  it("type1 without ADR fails", () => {
+    expect(evaluatePolicy(j({ oneWayProb: 0.5 }), src, opts).reason).toBe("type1_no_adr");
+  });
+  it("type1 by classification with ADR passes", () => {
+    expect(evaluatePolicy(j({ classification: "TYPE_1_ONE_WAY_DOOR" }), adr, opts).conclusion).toBe("success");
+  });
+  it("removed ADR does not count", () => {
+    const v = evaluatePolicy(j({ oneWayProb: 0.9 }), [{ filename: "docs/decisions/0001-x.md", status: "removed" }], opts);
+    expect(v.conclusion).toBe("failure");
+  });
+  it("ADR outside docs/decisions does not count", () => {
+    expect(evaluatePolicy(j({ oneWayProb: 0.9 }), [{ filename: "docs/other/x.md", status: "added" }], opts).conclusion).toBe("failure");
+  });
+  it("low confidence is ambiguous", () => {
+    expect(evaluatePolicy(j({ classificationConfidence: 0.5 }), src, opts).reason).toBe("ambiguous");
+  });
+  it("type2 with plan passes, without fails", () => {
+    expect(evaluatePolicy(j(), src, opts).reason).toBe("type2_ok");
+    expect(evaluatePolicy(j({ reversalProb: 0.69 }), src, opts).reason).toBe("type2_no_plan");
+    expect(evaluatePolicy(j({ reversalProb: 0.7 }), src, opts).reason).toBe("type2_ok");
+  });
+  it("one-way threshold is strictly > 0.40", () => {
+    expect(evaluatePolicy(j({ oneWayProb: 0.4 }), src, opts).reason).toBe("type2_ok");
+  });
+});
+
+describe("patch extract", () => {
+  it("puts migrations first and respects the budget", () => {
+    const files = [
+      { filename: "src/readme.ts", status: "modified", patch: "x".repeat(100) },
+      { filename: "migrations/001.sql", status: "added", patch: "CREATE TABLE a;" },
+    ];
+    expect(buildPatchExtract(files).startsWith("--- migrations/001.sql")).toBe(true);
+    expect(buildPatchExtract(files, 50).length).toBeLessThanOrEqual(50);
+  });
+});
+
+async function sign(secret: string, body: string) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return "sha256=" + [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+describe("signature", () => {
+  it("accepts valid, rejects tampered or missing", async () => {
+    const sig = await sign("s", "body");
+    expect(await verifySignature("s", "body", sig)).toBe(true);
+    expect(await verifySignature("s", "body2", sig)).toBe(false);
+    expect(await verifySignature("s", "body", null)).toBe(false);
+    expect(await verifySignature("wrong", "body", sig)).toBe(false);
+  });
+});
+
+async function makeEnv(extra: Partial<Env> = {}): Promise<Env> {
+  const kp = (await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", kp.privateKey)) as ArrayBuffer);
+  const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...der))}\n-----END PRIVATE KEY-----`;
+  return {
+    GITHUB_WEBHOOK_SECRET: "s",
+    GITHUB_APP_ID: "123",
+    GITHUB_APP_PRIVATE_KEY: pem,
+    JEV_API_KEY: "k",
+    MODE: "enforce",
+    GITHUB_API_URL: "https://gh.test",
+    JEV_API_URL: "https://jev.test/decisions",
+    ...extra,
+  };
+}
+
+function prEvent(over: Partial<PullRequestEvent> = {}, body = "no plan"): PullRequestEvent {
+  return {
+    action: "opened",
+    installation: { id: 9 },
+    repository: { name: "r", owner: { login: "o" } },
+    pull_request: { number: 7, title: "t", body, base: { ref: "main" }, head: { sha: "abc" } },
+    ...over,
+  };
+}
+
+function jevAnswer(o: { one: number; add: number; rev: number; cls: string; conf: number }) {
+  return {
+    answers: {
+      is_one_way_boundary_mutation: { type: "noul", noul: o.one },
+      is_additive_or_isolated: { type: "noul", noul: o.add },
+      has_concrete_reversal_plan: { type: "noul", noul: o.rev },
+      synthetic_classification: { type: "choice", choice: o.cls, confidence: o.conf, probabilities: {} },
+    },
+  };
+}
+
+/** Fake GitHub + Jev. Records calls and holds existing PR comments. */
+function fakeNet(jev: () => Response | Promise<Response>, existingComments: { id: number; body: string }[] = []) {
+  const calls: { method: string; url: string; body?: any }[] = [];
+  const comments = [...existingComments];
+  const fetchFn = (async (input: any, init: any = {}) => {
+    const url = String(input);
+    const method = init.method ?? "GET";
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ method, url, body });
+    const json = (o: unknown, status = 200) => new Response(JSON.stringify(o), { status });
+    if (url.includes("jev.test")) return jev();
+    if (url.endsWith("/access_tokens")) return json({ token: "tok" }, 201);
+    if (url.endsWith("/check-runs")) return json({ id: 55 }, 201);
+    if (url.includes("/check-runs/55")) return json({});
+    if (url.includes("/pulls/7/files")) return json([{ filename: "src/a.ts", status: "modified", patch: "+x" }]);
+    if (url.includes("/issues/7/comments") && method === "GET") return json(comments);
+    if (url.includes("/issues/7/comments") && method === "POST") return json({ id: 1 }, 201);
+    if (url.includes("/issues/comments/")) return json({});
+    return json({ error: "unexpected " + url }, 500);
+  }) as typeof fetch;
+  return { calls, fetchFn };
+}
+
+const finalCheck = (calls: any[]) => calls.filter((c) => c.method === "PATCH" && c.url.includes("/check-runs/55")).at(-1)?.body;
+
+describe("end to end", () => {
+  it("type2 with plan -> success, no comment", async () => {
+    const env = await makeEnv();
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }))));
+    await processPullRequest(prEvent(), env, net.fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(net.calls.some((c) => c.url.includes("/issues/7/comments"))).toBe(false);
+  });
+
+  it("type1 without ADR -> failure + one comment", async () => {
+    const env = await makeEnv();
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.96, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }))));
+    await processPullRequest(prEvent(), env, net.fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toHaveLength(1);
+  });
+
+  it("existing bot comment is edited, not duplicated", async () => {
+    const env = await makeEnv();
+    const net = fakeNet(
+      () => new Response(JSON.stringify(jevAnswer({ one: 0.96, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }))),
+      [{ id: 42, body: "<!-- judgement-gate --> old" }],
+    );
+    await processPullRequest(prEvent(), env, net.fetchFn);
+    expect(net.calls.some((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toBe(false);
+    expect(net.calls.some((c) => c.method === "PATCH" && c.url.endsWith("/issues/comments/42"))).toBe(true);
+  });
+
+  it("comment failure keeps the real verdict", async () => {
+    const env = await makeEnv();
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.96, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }))));
+    const failing = ((input: any, init: any) =>
+      String(input).includes("/issues/7/comments") ? Promise.resolve(new Response("forbidden", { status: 403 })) : net.fetchFn(input, init)) as typeof fetch;
+    const v = await processPullRequest(prEvent(), env, failing);
+    expect(v.reason).toBe("type1_no_adr");
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(finalCheck(net.calls).output.summary).toContain("Could not post");
+  });
+
+  it("shadow mode always concludes success", async () => {
+    const env = await makeEnv({ MODE: "shadow" });
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.96, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }))));
+    await processPullRequest(prEvent(), env, net.fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(finalCheck(net.calls).output.title).toContain("[Shadow]");
+  });
+
+  it("Jev outage -> neutral [Audit Degraded]", async () => {
+    const env = await makeEnv();
+    const net = fakeNet(() => new Response("boom", { status: 503 }));
+    const v = await processPullRequest(prEvent(), env, net.fetchFn);
+    expect(v.reason).toBe("degraded");
+    expect(finalCheck(net.calls).conclusion).toBe("neutral");
+  });
+
+  it("Jev timeout -> neutral", async () => {
+    const env = await makeEnv({ JEV_TIMEOUT_MS: "20" });
+    const net = fakeNet(() => new Promise<Response>(() => {}));
+    const fetchFn = ((input: any, init: any) =>
+      String(input).includes("jev.test")
+        ? new Promise((_, rej) => init.signal.addEventListener("abort", () => rej(new Error("aborted"))))
+        : net.fetchFn(input, init)) as typeof fetch;
+    const v = await processPullRequest(prEvent(), env, fetchFn);
+    expect(v.reason).toBe("degraded");
+    expect(finalCheck(net.calls).output.summary).toContain("20ms");
+  });
+});
+
+describe("webhook filtering", () => {
+  async function post(ev: any, opts: { event?: string; sig?: string | null } = {}) {
+    const env = await makeEnv();
+    const body = JSON.stringify(ev);
+    const pending: Promise<unknown>[] = [];
+    const headers: Record<string, string> = { "X-GitHub-Event": opts.event ?? "pull_request" };
+    const sig = opts.sig === undefined ? await sign(env.GITHUB_WEBHOOK_SECRET, body) : opts.sig;
+    if (sig) headers["X-Hub-Signature-256"] = sig;
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0, add: 1, rev: 1, cls: "TYPE_2_TWO_WAY_DOOR", conf: 1 }))));
+    const res = await handleWebhook(new Request("https://w/webhook", { method: "POST", body, headers }), env, {
+      fetchFn: net.fetchFn,
+      waitUntil: (p) => pending.push(p),
+    });
+    await Promise.all(pending);
+    return { res, net, started: pending.length > 0 };
+  }
+
+  it("rejects bad signature", async () => {
+    expect((await post(prEvent(), { sig: "sha256=00" })).res.status).toBe(401);
+    expect((await post(prEvent(), { sig: null })).res.status).toBe(401);
+  });
+  it("processes opened PRs", async () => {
+    const r = await post(prEvent());
+    expect(r.res.status).toBe(202);
+    expect(r.started).toBe(true);
+  });
+  it("ignores drafts, closed, other events, and non-text edits", async () => {
+    const draft = prEvent();
+    draft.pull_request.draft = true;
+    expect((await post(draft)).started).toBe(false);
+    expect((await post(prEvent({ action: "closed" }))).started).toBe(false);
+    expect((await post(prEvent(), { event: "push" })).started).toBe(false);
+    expect((await post(prEvent({ action: "edited", changes: { base: {} } }))).started).toBe(false);
+    expect((await post(prEvent({ action: "edited", changes: { body: { from: "x" } } }))).started).toBe(true);
+  });
+  it("processes ready_for_review", async () => {
+    expect((await post(prEvent({ action: "ready_for_review" }))).started).toBe(true);
+  });
+});

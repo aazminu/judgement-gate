@@ -1,0 +1,14 @@
+name = "judgement-gate"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[vars]
+# shadow = check always passes (informational); enforce = real success/failure
+MODE = "shadow"
+JEV_MODEL = "typesafe/jev-1.14"
+JEV_API_URL = "https://openrouter.ai/api/alpha/decisions"
+JEV_TIMEOUT_MS = "2500"
+GITHUB_API_URL = "https://api.github.com"
+# PRD default is 0.75. Jev's `confidence` measures concentration (0.66/0.34 -> 0.32), so tune in shadow mode.
+CONFIDENCE_THRESHOLD = "0.75"
+# Secrets (wrangler secret put): GITHUB_WEBHOOK_SECRET, GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY (PKCS#8 PEM), JEV_API_KEY
