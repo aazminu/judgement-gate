@@ -57,7 +57,7 @@ Scenarios 5 and 6 are about the per-judgement lines in the check summary, not th
 
 ## Deploy for real
 
-1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments), **Contents: read** (to read the org judgement config), subscribe to **Pull request**. Install it on the org or a test repo, including the org's `.github` repo if you use org-level judgements.
+1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments), **Contents: read** (to read the org judgement config), subscribe to **Pull request** and **Issue comment** (the second lets people reply `/judgement-gate false-positive <id>` to a flag; no new permission needed, and without it only the false-positive log is lost). Install it on the org or a test repo, including the org's `.github` repo if you use org-level judgements.
 2. Convert the downloaded key to PKCS#8 (Web Crypto cannot import the PKCS#1 key GitHub gives you):
    `openssl pkcs8 -topk8 -nocrypt -in app.pem -out app-pkcs8.pem`
 3. Set secrets, then deploy:
@@ -84,4 +84,4 @@ For each PR event the Worker sends Jev (through OpenRouter) the PR title and bod
 
 ## Status
 
-Alpha. The Jev API (`/api/alpha/decisions`) may change, Jev's confidence score is not a probability, and the gate fails open: if Jev is unavailable the check is `neutral` and the PR is not blocked. Tracking overrides and false positives is not built yet, so calibration is manual for now.
+Alpha. The Jev API (`/api/alpha/decisions`) may change, Jev's confidence score is not a probability, and the gate fails open: if Jev is unavailable the check is `neutral` and the PR is not blocked. Evaluations and false-positive replies are logged to Workers Analytics Engine (optional) so shadow-mode thresholds can be tuned from data; see [docs/calibration.md](docs/calibration.md).
