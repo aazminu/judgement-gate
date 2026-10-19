@@ -26,7 +26,7 @@ A missing file, an empty file, or `judgements: []` runs the built-in default. An
 
 ## Cost
 
-One extra GitHub request per event. The Worker also asks the Cloudflare Cache API to hold the config for 60 seconds, but the Cache API does nothing on `*.workers.dev` domains, so budget one request per event unless you deploy on a custom domain. On a custom domain, a new or changed config can take up to 60 seconds to apply.
+At most one extra GitHub request per isolate per 60 seconds. The Worker caches the config in memory within the isolate for 60 seconds (including on `*.workers.dev` domains) and also uses the Cloudflare Cache API as a best-effort second layer on custom domains. A new or changed config can take up to 60 seconds to apply.
 
 ## Regex caution
 
