@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { verifySignature } from "../src/crypto";
 import { handleWebhook, processPullRequest } from "../src/handler";
-import { buildPatchExtract } from "../src/github";
+import { buildPatchExtract, clearInstallationTokenCache, installationToken } from "../src/github";
 import { evaluatePolicy } from "../src/policy";
 import type { Env, JevResult, PullRequestEvent } from "../src/types";
 
@@ -242,5 +242,69 @@ describe("webhook filtering", () => {
   });
   it("processes ready_for_review", async () => {
     expect((await post(prEvent({ action: "ready_for_review" }))).started).toBe(true);
+  });
+});
+
+describe("installation token cache", () => {
+  it("reuses a cached installation token before expiry minus safety margin", async () => {
+    clearInstallationTokenCache();
+    const env = await makeEnv();
+    const t0 = Date.parse("2026-10-19T12:00:00Z");
+    const expiresAt = new Date(t0 + 60 * 60 * 1000).toISOString();
+    let count = 0;
+    const fetchFn = (async () => {
+      count++;
+      return new Response(JSON.stringify({ token: `tok-${count}`, expires_at: expiresAt }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    const first = await installationToken(env, 101, fetchFn, t0);
+    const second = await installationToken(env, 101, fetchFn, t0 + 54 * 60 * 1000);
+
+    expect(first).toBe("tok-1");
+    expect(second).toBe("tok-1");
+    expect(count).toBe(1);
+  });
+
+  it("refreshes the token once within the 5-minute safety margin or after expiry", async () => {
+    clearInstallationTokenCache();
+    const env = await makeEnv();
+    const t0 = Date.parse("2026-10-19T12:00:00Z");
+    let count = 0;
+    const fetchFn = (async () => {
+      count++;
+      const expiresAt = new Date(t0 + count * 60 * 60 * 1000).toISOString();
+      return new Response(JSON.stringify({ token: `tok-${count}`, expires_at: expiresAt }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    const first = await installationToken(env, 202, fetchFn, t0);
+    // Exactly 5 minutes before the 1-hour expiry -> within safety margin -> refreshes
+    const second = await installationToken(env, 202, fetchFn, t0 + 55 * 60 * 1000);
+    // 10 minutes later -> still well before the second token's 2-hour expiry -> cached
+    const third = await installationToken(env, 202, fetchFn, t0 + 65 * 60 * 1000);
+
+    expect(first).toBe("tok-1");
+    expect(second).toBe("tok-2");
+    expect(third).toBe("tok-2");
+    expect(count).toBe(2);
+  });
+
+  it("keeps cached tokens isolated per installation id", async () => {
+    clearInstallationTokenCache();
+    const env = await makeEnv();
+    const t0 = Date.parse("2026-10-19T12:00:00Z");
+    const expiresAt = new Date(t0 + 60 * 60 * 1000).toISOString();
+    const seenUrls: string[] = [];
+    const fetchFn = (async (input: any) => {
+      const url = String(input);
+      seenUrls.push(url);
+      const id = url.match(/\/installations\/(\d+)\/access_tokens$/)?.[1];
+      return new Response(JSON.stringify({ token: `tok-for-${id}`, expires_at: expiresAt }), { status: 201 });
+    }) as unknown as typeof fetch;
+
+    expect(await installationToken(env, 301, fetchFn, t0)).toBe("tok-for-301");
+    expect(await installationToken(env, 302, fetchFn, t0)).toBe("tok-for-302");
+    expect(await installationToken(env, 301, fetchFn, t0 + 60_000)).toBe("tok-for-301");
+    expect(await installationToken(env, 302, fetchFn, t0 + 60_000)).toBe("tok-for-302");
+    expect(seenUrls).toHaveLength(2);
   });
 });

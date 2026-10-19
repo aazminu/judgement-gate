@@ -121,7 +121,25 @@ export class GitHubClient {
   }
 }
 
-export async function installationToken(env: Env, installationId: number, fetchFn: FetchFn): Promise<string> {
+const TOKEN_SAFETY_MARGIN_MS = 5 * 60 * 1000;
+const DEFAULT_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+interface CachedInstallationToken {
+  token: string;
+  expiresAt: number;
+}
+
+const installationTokenCache = new Map<number, CachedInstallationToken>();
+
+export function clearInstallationTokenCache(): void {
+  installationTokenCache.clear();
+}
+
+export async function installationToken(env: Env, installationId: number, fetchFn: FetchFn, now = Date.now()): Promise<string> {
+  const cached = installationTokenCache.get(installationId);
+  if (cached && cached.expiresAt - TOKEN_SAFETY_MARGIN_MS > now) {
+    return cached.token;
+  }
   const jwt = await appJwt(env.GITHUB_APP_ID, env.GITHUB_APP_PRIVATE_KEY);
   const base = (env.GITHUB_API_URL ?? "https://api.github.com").replace(/\/$/, "");
   const res = await fetchFn(`${base}/app/installations/${installationId}/access_tokens`, {
@@ -129,7 +147,15 @@ export async function installationToken(env: Env, installationId: number, fetchF
     headers: { Authorization: `Bearer ${jwt}`, Accept: "application/vnd.github+json", "User-Agent": "judgement-gate" },
   });
   if (!res.ok) throw new Error(`installation token -> ${res.status} ${await res.text()}`);
-  return ((await res.json()) as { token: string }).token;
+  const data = (await res.json()) as { token: string; expires_at?: string };
+  const parsedExpiry = data.expires_at ? Date.parse(data.expires_at) : NaN;
+  const expiresAt = Number.isFinite(parsedExpiry) ? parsedExpiry : now + DEFAULT_TOKEN_TTL_MS;
+  if (expiresAt - TOKEN_SAFETY_MARGIN_MS > now) {
+    installationTokenCache.set(installationId, { token: data.token, expiresAt });
+  } else {
+    installationTokenCache.delete(installationId);
+  }
+  return data.token;
 }
 
 export function assembleContext(ev: PullRequestEvent, files: ChangedFile[]): PrContext {
