@@ -54,5 +54,37 @@ export interface JevResult {
 export type Verdict = {
   conclusion: "success" | "failure" | "neutral";
   summary: string;
-  reason: "type1_adr" | "type1_no_adr" | "ambiguous" | "type2_ok" | "type2_no_plan" | "degraded";
+  reason: string;
 };
+
+export interface JevQuestion {
+  type: "noul" | "choice";
+  instructions: string;
+  criteria: Record<string, string>;
+}
+
+export type JevAnswers = Record<string, { noul?: number; choice?: string; confidence?: number }>;
+
+export interface JudgementVerdict {
+  conclusion: "success" | "failure";
+  reason: string;
+  summary: string;
+  signals?: string;
+}
+
+export interface RemedyContext {
+  owner: string;
+  repo: string;
+  headRef: string;
+}
+
+/** A named question for the model, a decision rule, and a remedy that teaches the author. */
+export interface Judgement {
+  id: string;
+  name: string;
+  /** Globs against changed filenames; omitted means the judgement always applies. */
+  appliesTo?: string[];
+  questions: Record<string, JevQuestion>;
+  decide(answers: JevAnswers, pr: PrContext): JudgementVerdict;
+  remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };
+}
