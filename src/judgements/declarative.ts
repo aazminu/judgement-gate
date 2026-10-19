@@ -46,5 +46,13 @@ export function compileDeclarative(spec: DeclarativeSpec): Judgement {
       return { conclusion: "success", reason: `${spec.id}_ok`, summary: `${spec.name}: ok`, signals, metrics: { ...metrics, cleared: over } };
     },
     remedy: () => ({ why: spec.why, fix: spec.fix }),
+    agent: () => ({
+      threshold: spec.threshold,
+      satisfied_by: spec.satisfiedBy.map((r) =>
+        "pr_body_matches" in r
+          ? { type: "pr_body_matches" as const, regex: r.pr_body_matches.source, ...(r.pr_body_matches.flags ? { flags: r.pr_body_matches.flags } : {}) }
+          : { type: "file_added" as const, glob: r.file_added },
+      ),
+    }),
   };
 }

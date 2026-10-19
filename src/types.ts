@@ -95,6 +95,19 @@ export interface RemedyContext {
   headRef: string;
 }
 
+/** Machine-readable ways to clear a failing judgement. Never contains PR or diff content. */
+export type AgentSatisfiedBy =
+  | { type: "pr_body_matches"; regex: string; flags?: string; template?: string }
+  | { type: "pr_body_fields"; fields: string[]; template: string }
+  | { type: "file_added"; glob: string; example_path?: string };
+
+export interface AgentHint {
+  threshold?: number;
+  satisfied_by: AgentSatisfiedBy[];
+  /** Concrete text an agent can paste (into the PR body or a new file). */
+  suggested_template?: { target: "pr_body" | "file"; path?: string; content: string };
+}
+
 /** A named question for the model, a decision rule, and a remedy that teaches the author. */
 export interface Judgement {
   id: string;
@@ -106,4 +119,6 @@ export interface Judgement {
   questions: Record<string, JevQuestion>;
   decide(answers: JevAnswers, pr: PrContext): JudgementVerdict;
   remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };
+  /** Structured counterpart of the remedy, embedded in the comment for agents. */
+  agent?(v: JudgementVerdict, rc: RemedyContext): AgentHint;
 }

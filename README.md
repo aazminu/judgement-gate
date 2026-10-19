@@ -30,6 +30,8 @@ judgements:
 
 Full reference: [docs/configuration.md](docs/configuration.md).
 
+AI agents: each comment embeds a hidden JSON block saying how to clear every failing judgement; see [docs/agents.md](docs/agents.md).
+
 ## Demo in 2 minutes (no GitHub App needed)
 
 Real Worker, real Jev call, fake GitHub.
