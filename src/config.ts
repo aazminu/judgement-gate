@@ -1,7 +1,8 @@
 import YAML from "yaml";
 import { compileDeclarative, type DeclarativeSpec, type SatisfiedBy } from "./judgements/declarative";
 import { BUILTIN_IDS, builtinById, type BuiltinDefaults } from "./judgements/registry";
-import type { Judgement } from "./types";
+import type { GitHubClient } from "./github";
+import type { Env, Judgement } from "./types";
 
 export class ConfigError extends Error {}
 
@@ -113,4 +114,52 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
     out.push(j);
   });
   return out;
+}
+
+export const CONFIG_PATH = ".github/judgement-gate.yml";
+const CACHE_SECONDS = 60;
+
+async function readConfigText(gh: GitHubClient, owner: string, repo: string): Promise<string | null> {
+  const cache = typeof caches !== "undefined" ? ((caches as unknown as { default?: Cache }).default ?? null) : null;
+  const key = new Request(`https://judgement-gate.invalid/config/${owner}/${repo}`);
+  if (cache) {
+    try {
+      const hit = await cache.match(key);
+      if (hit) return (await hit.text()) || null;
+    } catch {
+      // cache is best-effort
+    }
+  }
+  const text = await gh.getFileContents(owner, repo, CONFIG_PATH);
+  if (cache) {
+    try {
+      await cache.put(key, new Response(text ?? "", { headers: { "Cache-Control": `max-age=${CACHE_SECONDS}` } }));
+    } catch {
+      // cache is best-effort
+    }
+  }
+  return text;
+}
+
+/**
+ * Load the org's judgements from the default branch of <owner>/<CONFIG_REPO>. Never throws: a missing
+ * file means the default built-ins, and an unreadable or invalid file means the same plus a note.
+ */
+export async function loadJudgements(gh: GitHubClient, owner: string, env: Env): Promise<{ judgements: Judgement[]; note?: string }> {
+  const defaults = { confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) };
+  const repo = env.CONFIG_REPO ?? ".github";
+  const fallback = () => parseConfig("", defaults);
+  let text: string | null;
+  try {
+    text = await readConfigText(gh, owner, repo);
+  } catch (e) {
+    return { judgements: fallback(), note: `Could not read judgement config (${(e as Error).message}); fell back to built-in judgements.` };
+  }
+  if (text === null) return { judgements: fallback() };
+  try {
+    return { judgements: parseConfig(text, defaults) };
+  } catch (e) {
+    if (!(e instanceof ConfigError)) throw e;
+    return { judgements: fallback(), note: `Config error: ${e.message}; fell back to built-in judgements.` };
+  }
 }

@@ -9,6 +9,7 @@ export interface Env {
   JEV_TIMEOUT_MS?: string;
   GITHUB_API_URL?: string;
   CONFIDENCE_THRESHOLD?: string;
+  CONFIG_REPO?: string;
 }
 
 export type FetchFn = typeof fetch;

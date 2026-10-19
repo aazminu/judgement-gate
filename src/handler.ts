@@ -1,11 +1,11 @@
 import { aggregate, type JudgementResult } from "./aggregate";
+import { loadJudgements } from "./config";
 import { renderComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
 import { appliesToFiles } from "./glob";
-import { oneWayDoor } from "./judgements/one-way-door";
-import type { Env, FetchFn, Judgement, PullRequestEvent, Verdict } from "./types";
+import type { Env, FetchFn, PullRequestEvent, Verdict } from "./types";
 
 const ACTIONS = new Set(["opened", "synchronize", "reopened", "edited", "ready_for_review"]);
 
@@ -45,9 +45,11 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
   // Immediate visual feedback in parallel with context fetch.
   const [check, files] = await Promise.all([gh.createCheckRun(owner, repo, ev.pull_request.head.sha), gh.listFiles(owner, repo, pr)]);
 
+  let configNote = "";
   try {
     const ctx = assembleContext(ev, files);
-    const all: Judgement[] = [oneWayDoor({ confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) })];
+    const { judgements: all, note } = await loadJudgements(gh, owner, env);
+    if (note) configNote = `\n\n_${note}_`;
     const applicable = all.filter((j) => appliesToFiles(j.appliesTo, files));
 
     let results: JudgementResult[] = [];
@@ -87,12 +89,12 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
       check.id,
       shadow ? "success" : verdict.conclusion,
       shadow ? `[Shadow] ${verdict.summary}` : verdict.summary,
-      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${detail}` : detail) + commentNote,
+      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${detail}` : detail) + configNote + commentNote,
     );
     return verdict;
   } catch (e) {
     // Fail open: never block hotfixes on an audit outage (Jev timeout, 5xx, malformed answer).
-    await gh.completeCheckRun(owner, repo, check.id, "neutral", "[Audit Degraded]", `Evaluation unavailable: ${(e as Error).message}`);
+    await gh.completeCheckRun(owner, repo, check.id, "neutral", "[Audit Degraded]", `Evaluation unavailable: ${(e as Error).message}${configNote}`);
     return { conclusion: "neutral", reason: "degraded", summary: "[Audit Degraded]" };
   }
 }

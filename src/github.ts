@@ -59,6 +59,21 @@ export class GitHubClient {
     return (await res.json()) as T;
   }
 
+  /** Raw file text from the repo's default branch (no `ref`), or null when it does not exist. */
+  async getFileContents(owner: string, repo: string, path: string): Promise<string | null> {
+    const res = await this.fetchFn(`${this.base}/repos/${owner}/${repo}/contents/${path}`, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/vnd.github.raw+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "judgement-gate",
+      },
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`GitHub GET ${path} -> ${res.status} ${await res.text()}`);
+    return res.text();
+  }
+
   createCheckRun(owner: string, repo: string, headSha: string) {
     return this.req<{ id: number }>("POST", `/repos/${owner}/${repo}/check-runs`, {
       name: CHECK_NAME,
