@@ -63,7 +63,7 @@ describe("parseConfig: valid", () => {
     expect(owd.appliesTo).toEqual(["db/**"]);
   });
 
-  it.each(["", "# comment only", "judgements: []", "other: 1"])("falls back to default built-in for %j", (text) => {
+  it.each(["", "# comment only", "judgements: []"])("falls back to default built-in for %j", (text) => {
     const list = parseConfig(text, defaults);
     expect(list.map((j) => j.id)).toEqual(["one-way-door"]);
   });
@@ -178,4 +178,13 @@ describe("review fixes", () => {
     expect(() => parseConfig(decl({ id: "Bad Id" }), defaults)).toThrow(/id/);
     expect(() => parseConfig(decl({ id: "good-id-2" }), defaults)).not.toThrow();
   });
+});
+
+describe("unknown root keys", () => {
+  it.each(["other: 1", "judgement:\n  - use: one-way-door", "Judgements:\n  - use: one-way-door"])(
+    "%j is a ConfigError (a typo must not silently drop custom judgements)",
+    (text) => {
+      expect(() => parseConfig(text, defaults)).toThrow(/unknown (top-level )?key/);
+    },
+  );
 });

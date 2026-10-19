@@ -1,6 +1,8 @@
 # Org judgement config. Put this at .github/judgement-gate.yml in your organisation's `.github` repo
 # and protect it with CODEOWNERS: whoever owns this file owns the org's judgement.
 # It is always read from the default branch, so a PR cannot change the rules that gate it.
+#
+# Note: a non-empty list REPLACES the default. List `use: one-way-door` to keep it running.
 judgements:
   # Built-in: is this a one-way door? Optional overrides: confidence_threshold, applies_to.
   - use: one-way-door

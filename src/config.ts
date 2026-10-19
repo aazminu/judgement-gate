@@ -88,6 +88,8 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
   const fallback = () => [builtinById("one-way-door", {}, defaults)!];
   if (doc === null || doc === undefined) return fallback();
   if (!isObj(doc)) throw new ConfigError("config root must be a mapping");
+  const unknownRoot = Object.keys(doc).filter((k) => k !== "judgements");
+  if (unknownRoot.length > 0) throw new ConfigError(`unknown top-level key ${unknownRoot.map((k) => `"${k}"`).join(", ")} (expected "judgements")`);
   if (doc.judgements === undefined || doc.judgements === null) return fallback();
   if (!Array.isArray(doc.judgements)) throw new ConfigError('"judgements" must be a list');
   if (doc.judgements.length === 0) return fallback();
