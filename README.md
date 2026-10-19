@@ -22,8 +22,10 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 | 2 | same, with `docs/decisions/*.md` | SUCCESS |
 | 3 | flagged feature, has reversal plan | SUCCESS |
 | 4 | flagged feature, no plan | FAILURE + 3-line comment |
-| 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE + API-contract comment |
-| 6 | same, with `Migration Plan:` in the body | SUCCESS |
+| 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too) |
+| 6 | same, with `Migration Plan:` in the body | API-contract judgement passes. One-way door can still say "Ambiguous" and fail the check, because Jev is unsure whether a plain rename is a one-way door (classification confidence about 0.5 against the 0.75 threshold) |
+
+Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Lowering `CONFIDENCE_THRESHOLD` (or `confidence_threshold` on `use: one-way-door`) is what makes borderline PRs like this pass; tune it in shadow mode.
 
 The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own. Scenarios 1-4 also show `applies_to` at work: the API judgement is skipped because no changed file is under `services/api/`.
 
