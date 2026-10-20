@@ -14,6 +14,10 @@
 - Diff sent to Jev is capped at 50KB, with migrations, SQL, manifests, infra config and models first.
 - Jev contract: `POST /api/alpha/decisions` on OpenRouter, model `typesafe/jev-1.14`. This is an alpha API and may change.
 
+## End-to-end run
+
+`npm run e2e` starts a scripted Jev (`scripts/jev-stub.mjs`), the mock GitHub and the real Worker via `wrangler dev`, sends signed webhooks for the demo scenarios in `scripts/scenarios.mjs`, and asserts on what the mock recorded (check conclusion and summary, comment, label, the hidden agent block). The stub's answers come from each scenario's `jev` field; failure modes (Jev down, unrecognised severity) are switched on the stub over HTTP. It needs no secrets, never reads your `.dev.vars`, and writes server logs to `e2e-logs/`. CI runs it as the `e2e` job, which uploads those logs when it fails. To cover a new behaviour, add a scenario (files and `jev` answers) and a case in `scripts/e2e.mjs`.
+
 ## Things to know
 
 - **Confidence threshold.** The 0.75 default applies to Jev's `confidence`, which measures how concentrated the distribution is (0.66/0.34 gives 0.32), not top probability. Clear-cut PRs score 0.9+, but borderline ones will often land on "Ambiguous". Tune `CONFIDENCE_THRESHOLD` during shadow mode.
