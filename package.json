@@ -10,7 +10,8 @@
     "test": "vitest run",
     "mock-github": "node scripts/mock-github.mjs",
     "simulate": "node scripts/simulate.mjs",
-    "jev-smoke": "node scripts/jev-smoke.mjs"
+    "jev-smoke": "node scripts/jev-smoke.mjs",
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",

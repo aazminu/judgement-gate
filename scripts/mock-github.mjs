@@ -1,6 +1,8 @@
 // Tiny fake GitHub API so the demo works without a GitHub App. Run: npm run mock-github
 // Point the Worker at it with GITHUB_API_URL=http://localhost:8788 (see .dev.vars.example).
 // Scenarios are chosen by PR number (see SCENARIOS) and recorded results are printed to the console.
+// For tests (scripts/e2e.mjs): GET /__recorded returns what the Worker wrote, POST /__reset clears it, and
+// POST /__register {pr, files} gives a PR number its own changed files. None of these change the demo.
 import fs from "node:fs";
 import http from "node:http";
 
@@ -11,6 +13,9 @@ const CONFIG_FILE = process.env.MOCK_CONFIG ?? "examples/judgement-gate.yml";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const comments = new Map(); // pr -> [{id, body}]
+const checks = new Map(); // check run id -> {id, head_sha, name, status, conclusion, title, summary}
+const labels = new Map(); // pr -> [label, ...] in the order they were added
+const registered = new Map(); // pr -> files, set through /__register
 let nextId = 1000;
 
 const server = http.createServer(async (req, res) => {
@@ -25,20 +30,37 @@ const server = http.createServer(async (req, res) => {
   const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
   let m;
+  if (req.method === "GET" && url.pathname === "/__recorded") {
+    const comment_bodies = Object.fromEntries([...comments].map(([pr, list]) => [pr, list.map((c) => c.body)]));
+    return send({ checks: [...checks.values()], comments: comment_bodies, labels: Object.fromEntries(labels) });
+  }
+  if (req.method === "POST" && url.pathname === "/__reset") {
+    for (const map of [comments, checks, labels, registered]) map.clear();
+    return send({});
+  }
+  if (req.method === "POST" && url.pathname === "/__register") {
+    registered.set(String(body.pr), body.files);
+    return send({});
+  }
   if (req.method === "POST" && /\/access_tokens$/.test(url.pathname)) return send({ token: "mock-token" }, 201);
   if (req.method === "POST" && /\/check-runs$/.test(url.pathname)) {
     log(`CHECK  in_progress  ${body.name} @ ${body.head_sha.slice(0, 7)}`);
-    return send({ id: nextId++ }, 201);
+    const id = nextId++;
+    checks.set(id, { id, head_sha: body.head_sha, name: body.name, status: "in_progress" });
+    return send({ id }, 201);
   }
   if (req.method === "PATCH" && /\/check-runs\/\d+$/.test(url.pathname)) {
+    const check = checks.get(Number(url.pathname.split("/").pop()));
+    if (check) Object.assign(check, { status: "completed", conclusion: body.conclusion, title: body.output.title, summary: body.output.summary ?? "" });
     log(`CHECK  ${body.conclusion.toUpperCase().padEnd(8)} ${body.output.title}`);
     for (const line of (body.output.summary ?? "").split("\n").filter(Boolean)) console.log("         | " + line);
     return send({});
   }
   if ((m = url.pathname.match(/\/pulls\/(\d+)\/files$/))) {
-    return send(url.searchParams.get("page") === "1" ? (SCENARIOS[m[1]]?.files ?? []) : []);
+    return send(url.searchParams.get("page") === "1" ? (registered.get(m[1]) ?? SCENARIOS[m[1]]?.files ?? []) : []);
   }
   if (req.method === "POST" && (m = url.pathname.match(/\/issues\/(\d+)\/labels$/))) {
+    labels.set(m[1], [...(labels.get(m[1]) ?? []), ...(body?.labels ?? [])]);
     log(`LABEL added on #${m[1]}: ${(body?.labels ?? []).join(", ")}`);
     return send([]);
   }
