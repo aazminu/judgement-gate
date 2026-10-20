@@ -15,7 +15,7 @@ const safeJson = (o: unknown) =>
     .replace(/\u2029/g, "\\u2029");
 
 /** Hidden, machine-readable twin of the comment. Ids, reasons, numbers, fix templates and authored probes only: no PR or diff content. */
-function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string, routing?: RoutingResult): string {
+function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string, routing?: RoutingResult, classified: JudgementResult[] = []): string {
   const payload = {
     schema: AGENT_BLOCK_VERSION,
     mode,
@@ -32,13 +32,34 @@ function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string,
         probes: judgement.probes?.(verdict) ?? [],
       };
     }),
+    ...(classified.length > 0 && {
+      classification: classified.map(({ judgement, verdict }) => ({
+        id: judgement.id,
+        level: verdict.classification!.level,
+        confidence: verdict.classification!.confidence ?? null,
+      })),
+    }),
     ...(routing && { routing: { route: routing.route, reasons: routing.reasons, label: routing.label } }),
   };
   return `<!-- judgement-gate:v${AGENT_BLOCK_VERSION} ${safeJson(payload)} -->`;
 }
 
-/** One comment for the PR: a teaching section (why + fix) per failing judgement. */
-export function renderComment(failing: JudgementResult[], rc: RemedyContext, mode = "shadow", routing?: RoutingResult): string {
+/**
+ * One comment for the PR: a teaching section (why + fix) per failing judgement. `all` is every result; classifiers
+ * (severity) among them are reported alongside, never as a reason to post.
+ */
+export function renderComment(
+  failing: JudgementResult[],
+  rc: RemedyContext,
+  mode = "shadow",
+  routing?: RoutingResult,
+  all: JudgementResult[] = [],
+): string {
+  const classified = all.filter((r) => r.verdict.classification);
+  const labels = classified.map(({ judgement, verdict }) => {
+    const { level, confidence } = verdict.classification!;
+    return `**${judgement.name}:** ${level}${confidence === undefined ? "" : ` (confidence ${confidence.toFixed(2)})`}`;
+  });
   const heading =
     failing.length === 1 ? failing[0].verdict.summary : `${failing.length} judgements need attention`;
   const sections = failing.map(({ judgement, verdict }) => {
@@ -50,5 +71,5 @@ export function renderComment(failing: JudgementResult[], rc: RemedyContext, mod
     parts.push("", `<sub>Not a real issue? Reply \`${FALSE_POSITIVE_COMMAND} ${judgement.id}\` to help calibrate.</sub>`);
     return parts.join("\n");
   });
-  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode, routing)}`;
+  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${labels.length > 0 ? `${labels.join("  \n")}\n\n` : ""}${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode, routing, classified)}`;
 }

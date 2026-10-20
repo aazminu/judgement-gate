@@ -32,6 +32,24 @@ A judgement can also carry `probes`, short questions a reviewer will ask, shown 
 
 Full reference: [docs/configuration.md](docs/configuration.md).
 
+## Severity
+
+`one-way-door` asks whether a change can be undone. **Severity** asks a different question: how bad is it if this change is wrong? A reversible change to checkout can be P0; an irreversible change to an internal admin table can be P3. Your org writes the levels and what each means (P0 to P3, Sev1 to Sev4, anything), because companies disagree about it, and the gate ships no default rubric. The model picks one level per PR.
+
+```yaml
+  - id: severity
+    name: Severity
+    classify:
+      question: "If this change is wrong, how bad is the impact?"
+      levels:               # most severe first
+        - { id: P0, means: "customer-facing outage, data loss, or security exposure" }
+        - { id: P1, means: "major feature broken for many users, no workaround" }
+        - { id: P3, means: "internal or cosmetic; no customer impact" }
+    applies_to: ["services/**"]
+```
+
+Severity informs and never fails the check: there is nothing for an author to "clear". The level appears in the check summary (`pass: Severity (P1)`), in the remediation comment when one is already posted for a failing judgement, in the hidden agent block, and in analytics. Nothing acts on it yet, and it does not affect review routing. See [docs/configuration.md](docs/configuration.md#severity).
+
 ## Review routing
 
 Besides the check, the gate recommends who should review the PR: a **human** or an **agent**. By default a Type 1 result (a one-way door, even one with an ADR) or an ambiguous one routes to a human. An ADR shows that someone wrote the decision down, not that someone accountable accepted it, so a person still needs to look. You can add your own rules in the same YAML file, by judgement, by reason code or by changed-file glob.
@@ -62,8 +80,9 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 | 4 | flagged feature, no plan | FAILURE + 3-line comment, routed to an agent |
 | 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too); routed to a human (`public-api-contract` is in `human_when`) |
 | 6 | same, with `Migration Plan:` in the body | API-contract judgement passes; one-way door can still read "Ambiguous" and fail the check; routed to a human (`public-api-contract` is in `human_when`) |
+| 7 | reversible, flagged change under `services/checkout/` with a reversal plan (uses `examples/judgement-gate.yml`) | SUCCESS; the summary has a `Severity (P?)` line, whatever level the model picks |
 
-The mock logs `LABEL added on #n: ...` when the gate labels a PR (scenarios 1 and 2 also match the `migrations/**` rule in the example config). Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
+The mock logs `LABEL added on #n: ...` when the gate labels a PR (scenarios 1 and 2 also match the `migrations/**` rule in the example config). Scenarios 5 to 7 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
 
 `npm run jev-smoke` calls Jev directly to verify your key. `npm test` runs the unit and end-to-end tests. `npm run typecheck` runs tsc.
 

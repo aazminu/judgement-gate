@@ -12,6 +12,7 @@ export const FALSE_POSITIVE_COMMAND = "/judgement-gate false-positive";
  *   blob5   outcome: "flagged" | "passed" | "cleared" | "degraded" | "false_positive" | "human" | "agent" | "unavailable"
  *   blob6   verdict reason ("" for feedback; routing reasons joined with "; ", at most 256 chars, for routing)
  *   blob7   commenter's author_association ("" for evaluation)
+ *   blob8   classification level chosen by a classifier judgement such as severity; the column is absent otherwise
  *   double1 PR number
  *   double2 flagged (0/1)
  *   double3 probability (-1 when not applicable)
@@ -32,6 +33,8 @@ export interface AnalyticsEvent {
   association?: string;
   probability?: number;
   confidence?: number;
+  /** Level chosen by a classifier judgement. Always one of the org's configured level ids. */
+  level?: string;
   latencyMs?: number;
 }
 
@@ -41,7 +44,7 @@ export function record(sink: AnalyticsSink | undefined, e: AnalyticsEvent): void
   try {
     sink.writeDataPoint({
       indexes: [e.repo],
-      blobs: [e.event, e.repo, e.judgement, e.mode, e.outcome, e.reason ?? "", e.association ?? ""],
+      blobs: [e.event, e.repo, e.judgement, e.mode, e.outcome, e.reason ?? "", e.association ?? "", ...(e.level === undefined ? [] : [e.level])],
       doubles: [
         e.pr,
         e.outcome === "flagged" ? 1 : 0,

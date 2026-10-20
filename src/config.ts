@@ -1,4 +1,5 @@
 import YAML from "yaml";
+import { compileClassifier, type ClassifierLevel, type ClassifierSpec } from "./judgements/classifier";
 import { compileDeclarative, type DeclarativeSpec, type SatisfiedBy } from "./judgements/declarative";
 import type { OneWayDoorProbes } from "./judgements/one-way-door";
 import { BUILTIN_IDS, builtinById, type BuiltinDefaults } from "./judgements/registry";
@@ -103,6 +104,55 @@ function declarative(o: Obj, where: string): DeclarativeSpec {
   };
 }
 
+const CLASSIFIER_KEYS = new Set(["id", "name", "classify", "applies_to"]);
+const CLASSIFY_KEYS = new Set(["question", "levels"]);
+const LEVEL_KEYS = new Set(["id", "means"]);
+const LEVEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const MAX_LEVEL_ID = 32;
+const MIN_LEVELS = 2;
+
+function unknownKeys(o: Obj, allowed: Set<string>, where: string): void {
+  const unknown = Object.keys(o).filter((k) => !allowed.has(k));
+  if (unknown.length > 0) throw new ConfigError(`${where}: unknown key ${unknown.map((k) => `"${k}"`).join(", ")}`);
+}
+
+function classifierLevels(v: unknown, where: string): ClassifierLevel[] {
+  if (!Array.isArray(v) || v.length < MIN_LEVELS) {
+    throw new ConfigError(`${where}: "levels" must be a list of at least ${MIN_LEVELS} levels, most severe first`);
+  }
+  const seen = new Set<string>();
+  return v.map((entry, i) => {
+    const at = `${where}: levels[${i}]`;
+    if (!isObj(entry)) throw new ConfigError(`${at} must be a mapping with "id" and "means"`);
+    unknownKeys(entry, LEVEL_KEYS, at);
+    const id = entry.id;
+    if (typeof id !== "string" || id.length === 0 || id.length > MAX_LEVEL_ID || !LEVEL_ID.test(id)) {
+      throw new ConfigError(`${at}: "id" must be a string of 1-${MAX_LEVEL_ID} letters, digits, ".", "_" or "-", such as "P1" or "Sev1"`);
+    }
+    // The levels go to Jev as an object, and JS orders digit-only keys numerically, which would silently reorder them.
+    if (/^[0-9]+$/.test(id)) throw new ConfigError(`${at}: "id" must not be only digits (use "P${id}" or "Sev${id}")`);
+    if (seen.has(id.toLowerCase())) throw new ConfigError(`${at}: duplicate level id "${id}" (ids are compared ignoring case)`);
+    seen.add(id.toLowerCase());
+    return { id, means: str(entry, "means", at) };
+  });
+}
+
+/** A `classify:` entry: one choice question and the org's ordered levels. Informs only, so it has no threshold or remedy. */
+function classifier(o: Obj, where: string): ClassifierSpec {
+  unknownKeys(o, CLASSIFIER_KEYS, where);
+  const id = str(o, "id", where);
+  if (!KEBAB.test(id)) throw new ConfigError(`${where}: "id" must be kebab-case (lowercase letters, digits, hyphens)`);
+  if (!isObj(o.classify)) throw new ConfigError(`${where}: "classify" must be a mapping with "question" and "levels"`);
+  unknownKeys(o.classify, CLASSIFY_KEYS, `${where}: classify`);
+  return {
+    id,
+    name: str(o, "name", where),
+    question: str(o.classify, "question", `${where}: classify`),
+    levels: classifierLevels(o.classify.levels, `${where}: classify`),
+    appliesTo: globs(o.applies_to, where),
+  };
+}
+
 const ROUTING_KEYS = ["include_defaults", "label", "human_when"];
 const MAX_LABEL = 50;
 
@@ -126,7 +176,14 @@ function routingRule(entry: unknown, i: number, judgements: Judgement[]): Routin
   if (typeof id !== "string" || !judgement) {
     throw new ConfigError(`${where}: unknown judgement ${JSON.stringify(id)} (known: ${judgements.map((j) => j.id).join(", ")})`);
   }
-  if (!("reason" in entry)) return { judgement: id };
+  if (!("reason" in entry)) {
+    if (judgement.kind === "classifier") {
+      throw new ConfigError(
+        `${where}: "${id}" is a classifier and never fires, so this entry could never match (use reason: ${judgement.reasons[judgement.reasons.length - 1]}, or a files rule)`,
+      );
+    }
+    return { judgement: id };
+  }
   const reason = entry.reason;
   if (typeof reason !== "string" || !judgement.reasons.includes(reason)) {
     throw new ConfigError(`${where}: unknown reason ${JSON.stringify(reason)} for "${id}" (known: ${judgement.reasons.join(", ")})`);
@@ -220,6 +277,11 @@ export function parseGateConfig(text: string, defaults: BuiltinDefaults): { judg
       );
       if (!built) throw new ConfigError(`${where}: unknown built-in (known: ${BUILTIN_IDS.join(", ")})`);
       j = built;
+    } else if ("classify" in entry) {
+      const where = `judgements[${i}] (${typeof entry.id === "string" ? entry.id : "no id"})`;
+      const spec = classifier(entry, where);
+      if ((BUILTIN_IDS as readonly string[]).includes(spec.id)) throw new ConfigError(`${where}: id collides with a built-in`);
+      j = compileClassifier(spec);
     } else {
       const where = `judgements[${i}] (${typeof entry.id === "string" ? entry.id : "no id"})`;
       const spec = declarative(entry, where);

@@ -19,7 +19,58 @@ A judgement is what the gate asks about a change. The Worker sends every applica
 
 The built-in `one-way-door` ships default probes for type 1 and type 2 verdicts, and an `ambiguous` verdict shows the type 1 list. Setting `probes.type1` or `probes.type2` replaces only that list. A declarative judgement with no `probes` shows none.
 
+Severity is a different kind of entry, with `classify:` instead of `question`/`true`/`false`; see [Severity](#severity).
+
 **A non-empty list replaces the default.** If you list only your own judgement, `one-way-door` stops running org-wide. Add `- use: one-way-door` to keep it.
+
+## Severity
+
+Severity labels each PR with a level your org defines, such as P0 to P3. `one-way-door` measures reversibility (can we undo this?); severity measures impact (how bad is it if this is wrong?). They are independent: a reversible change to checkout can be P0, an irreversible change to an internal admin table can be P3.
+
+It is a **classifier**, not a yes/no judgement. It sends one `choice` question to Jev in the same request as the other judgements and records the answer. It **never fails the check**, never flags, and never needs clearing: a judgement the author can never satisfy would be a gate that cannot be passed. The gate ships no built-in severity rubric, because a generic P0 to P3 would be invented. What P0 means is yours to write.
+
+```yaml
+judgements:
+  - use: one-way-door
+  - id: severity
+    name: Severity
+    classify:
+      question: "If this change is wrong, how bad is the impact?"
+      levels:                          # ordered, most severe first
+        - id: P0
+          means: "customer-facing outage, data loss, or security exposure"
+        - id: P1
+          means: "major feature broken for many users, no workaround"
+        - id: P2
+          means: "degraded or partial; a workaround exists"
+        - id: P3
+          means: "internal or cosmetic; no customer impact"
+    applies_to: ["services/**"]        # optional; omit to classify every PR
+```
+
+| Key | Meaning |
+|---|---|
+| `id`, `name` | Unique id (kebab-case, not `one-way-door`) and the name shown in the summary. |
+| `classify.question` | The question for Jev. |
+| `classify.levels` | A list of at least 2 levels, most severe first. Each has `id` and `means` and nothing else. |
+| `levels[].id` | 1 to 32 letters, digits, `.`, `_` or `-`; not digits only (`P1` or `Sev1`, not `1`). Unique, ignoring case. Free-form: nothing assumes a `P` prefix. |
+| `levels[].means` | What the level means, written as a rubric the model can apply. |
+| `applies_to` | Optional globs, as for any judgement. |
+
+The levels are a list so their order is explicit. `threshold`, `satisfied_by`, `why`, `fix` and `probes` do not apply to a classifier (it never fails, so there is nothing to teach) and are rejected as unknown keys.
+
+**Where it shows up.**
+
+- The check summary has a line per judgement: `- pass: Severity (P1)`, or `- pass: Severity (no level reported)`. With severity as the only judgement the check title is `Severity: P1`.
+- The remediation comment gets a `**Severity:** P1 (confidence 0.82)` line, **only when a comment is already posted for a failing judgement**. Severity alone never causes a comment.
+- The hidden agent block gets an additive `classification` field ([docs/agents.md](agents.md#classification)).
+- Analytics: an `evaluation` row for the id with outcome `passed`, the reason `<id>_classified` or `<id>_unreported`, the confidence in `double4`, and the level in `blob8` ([calibration.md](calibration.md)).
+
+**Confidence.** The level is reported with the model's confidence. A low confidence does not escalate or change anything in this version, and the confidence is not a calibrated probability. Look at the distribution in analytics before relying on it.
+
+**When the model gives no usable answer.** If Jev's answer for severity is missing, malformed, or names something that is not one of your levels, the gate reports `no level reported` (reason `<id>_unreported`). The other judgements are not affected and the audit is not degraded. A real Jev outage still degrades the audit as it always did.
+
+**Routing.** Severity does not feed review routing and nothing acts on the level yet. A classifier never "fires", so a `judgement: severity` entry in `routing.human_when` with no `reason` could never match and is a routing config error (see below). `judgement: severity` with `reason: severity_unreported` is allowed and means "send to a human when severity could not be determined". `reason: severity_classified` is accepted but matches every time severity ran, so it adds nothing.
 
 ## Review routing
 
@@ -47,6 +98,8 @@ routing:
 - `judgement: <id>`: that judgement ran and **fired**. Fired means it flagged the change, whether or not the author cleared it, so a Type 1 change with an ADR still counts.
 - `judgement: <id>` with `reason: <code>`: that judgement ran and returned this reason code, fired or not. This is how to target `ambiguous`. Codes: `type1_adr`, `type1_no_adr`, `ambiguous`, `type2_ok`, `type2_no_plan` for `one-way-door`; `<id>_unsatisfied` and `<id>_ok` for a declarative judgement.
 - `files: [<glob>, ...]`: any changed file matches any glob (`*`, `**`, `?`), whatever its status, so a deleted migration counts. This does not depend on the model and works even when no judgement applied.
+
+A classifier such as severity never fires, so `judgement: <id>` without `reason` on one is a config error. Codes for a classifier: `<id>_classified` and `<id>_unreported`.
 
 A judgement that did not run (its `applies_to` matched no changed file) matches nothing. A `judgement:` id must be in the judgements list actually in force, and a `reason:` must be a code that judgement can produce. Otherwise it is a config error, so a typo cannot quietly send PRs to an agent.
 

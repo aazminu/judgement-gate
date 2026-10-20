@@ -35,5 +35,18 @@ export const SCENARIOS = {
     body: "Cleaner naming.\n\nMigration Plan: serve both fields for one release, then remove name.",
     files: [{ filename: "services/api/v1/users.ts", status: "modified", patch: "@@\n-  name: string;\n+  fullName: string;" }],
   },
+  // Severity (examples/judgement-gate.yml) is a classifier: it labels the PR and never fails the check.
+  // It applies to anything under services/**, so 5 and 6 show a Severity line too. 7 is a reversible change to a sensitive path.
+  7: {
+    title: "Retry failed card charges once in checkout",
+    body: "Retries a declined charge once.\n\n" + PLAN,
+    files: [
+      {
+        filename: "services/checkout/charge.ts",
+        status: "modified",
+        patch: "@@\n-  return charge(card);\n+  return flags.RETRY_CHARGE ? retryOnce(() => charge(card)) : charge(card);",
+      },
+    ],
+  },
 };
 

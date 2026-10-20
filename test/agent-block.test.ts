@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderComment } from "../src/comment";
 import { COMMENT_MARKER } from "../src/github";
 import { compileDeclarative } from "../src/judgements/declarative";
+import { compileClassifier } from "../src/judgements/classifier";
 import { DEFAULT_PROBES, oneWayDoor } from "../src/judgements/one-way-door";
 import type { Judgement, JudgementVerdict } from "../src/types";
 
@@ -98,6 +99,62 @@ describe("agent block", () => {
     const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
     expect(block.indexOf("-->")).toBe(block.length - 3);
     expect(parseBlock(md).data.failing[0].name).toBe("a --> <script>");
+  });
+});
+
+describe("classification in the comment", () => {
+  const sev = compileClassifier({
+    id: "severity",
+    name: "Severity",
+    question: "q",
+    levels: [
+      { id: "P0", means: "a" },
+      { id: "P1", means: "b" },
+    ],
+  });
+  const classified = { judgement: sev, verdict: sev.decide({ q: { choice: "P1", confidence: 0.82 } }, { title: "", body: "", baseBranch: "", headSha: "", files: [], patchExtract: "" }) };
+  const unreported = { judgement: sev, verdict: sev.decide({}, { title: "", body: "", baseBranch: "", headSha: "", files: [], patchExtract: "" }) };
+  const failure = { judgement: oneWayDoor(), verdict: { conclusion: "failure" as const, reason: "type2_no_plan", summary: "s", fired: false } };
+
+  it("adds a Severity line and a classification array next to a failing judgement", () => {
+    const md = renderComment([failure], rc, "enforce", undefined, [classified, failure]);
+    expect(md).toContain("**Severity:** P1 (confidence 0.82)");
+    const { version, data } = parseBlock(md);
+    expect(version).toBe(1);
+    expect(data.schema).toBe(1);
+    expect(data.classification).toEqual([{ id: "severity", level: "P1", confidence: 0.82 }]);
+    expect(data.failing.map((f: { id: string }) => f.id)).toEqual(["one-way-door"]);
+  });
+
+  it("the Severity line sits between the heading and the first section", () => {
+    const md = renderComment([failure], rc, "shadow", undefined, [classified, failure]);
+    expect(md.indexOf("**Severity:**")).toBeGreaterThan(md.indexOf("### judgement-gate:"));
+    expect(md.indexOf("**Severity:**")).toBeLessThan(md.indexOf("#### One-way door"));
+  });
+
+  it("omits confidence when there is none", () => {
+    const noConf = { judgement: sev, verdict: { ...classified.verdict, classification: { level: "P0" } } };
+    const md = renderComment([failure], rc, "shadow", undefined, [noConf, failure]);
+    expect(md).toContain("**Severity:** P0\n");
+    expect(parseBlock(md).data.classification).toEqual([{ id: "severity", level: "P0", confidence: null }]);
+  });
+
+  it("an unreported classifier adds nothing", () => {
+    const md = renderComment([failure], rc, "shadow", undefined, [unreported, failure]);
+    expect(md).not.toContain("Severity");
+    expect(parseBlock(md).data).not.toHaveProperty("classification");
+  });
+
+  it("without classifiers the block is exactly what it was before", () => {
+    const before = renderComment([failure], rc, "shadow");
+    expect(renderComment([failure], rc, "shadow", undefined, [failure])).toBe(before);
+    expect(parseBlock(before).data).not.toHaveProperty("classification");
+  });
+
+  it("a classifier is never listed as failing or given a false-positive hint", () => {
+    const md = renderComment([failure], rc, "shadow", undefined, [classified, failure]);
+    expect(md).not.toContain("false-positive severity");
+    expect(md).not.toContain("#### Severity");
   });
 });
 

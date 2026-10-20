@@ -167,6 +167,7 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
         reason: v.reason,
         probability: v.metrics?.probability,
         confidence: v.metrics?.confidence,
+        level: v.classification?.level,
         latencyMs,
       });
     }
@@ -182,13 +183,17 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
     if (failing.length > 0) {
       try {
-        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing));
+        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing, results));
       } catch (e) {
         console.error("judgement-gate comment failed", e);
         commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
       }
     }
-    const lines = results.map((r) => `- ${r.verdict.conclusion === "success" ? "pass" : "FAIL"}: ${r.judgement.name} (${r.verdict.summary})`);
+    // A classifier's summary is its name and level, so the line shows the level alone.
+    const lines = results.map((r) => {
+      const shown = r.judgement.kind === "classifier" ? (r.verdict.classification?.level ?? "no level reported") : r.verdict.summary;
+      return `- ${r.verdict.conclusion === "success" ? "pass" : "FAIL"}: ${r.judgement.name} (${shown})`;
+    });
     const detail = lines.length > 0 ? `${verdict.summary}\n\n${lines.join("\n")}` : verdict.summary;
     await gh.completeCheckRun(
       owner,
