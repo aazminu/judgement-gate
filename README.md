@@ -54,7 +54,7 @@ Severity informs and never fails the check: there is nothing for an author to "c
 
 Besides the check, the gate recommends who should review the PR: a **human** or an **agent**. By default a Type 1 result (a one-way door, even one with an ADR) or an ambiguous one routes to a human. An ADR shows that someone wrote the decision down, not that someone accountable accepted it, so a person still needs to look. You can add your own rules in the same YAML file, by judgement, by reason code or by changed-file glob.
 
-Routing recommends and never changes the check: pass, fail and neutral are the same with or without it. A `human` result adds a PR label (default `needs-human-review`) and a `Review routing:` line to the check summary. When the gate posts a remediation comment, it also shows a `Review routing:` line there, in words (human, agent, or could not be decided), so the author sees why. The gate never removes the label; a person does. The gate does not require the review itself. To enforce it, use CODEOWNERS or a small workflow in your repo; see [docs/configuration.md](docs/configuration.md#review-routing).
+Routing recommends and never changes the check: pass, fail and neutral are the same with or without it. A `human` result adds a PR label (default `needs-human-review`) and a `Review routing:` line to the check summary. When the gate posts a remediation comment, it also shows a `Review routing:` line there, in words (human, agent, or could not be decided), so the author sees why. A PR that passes every judgement but routes to a human (for example Type 1 with an ADR) gets a short comment of its own, in the same place, that says a person will review it and why, with the questions a reviewer will ask; it is posted in shadow routing mode too, worded as a recommendation. A PR routed to an agent gets no comment. The gate never removes the label; a person does. The gate does not require the review itself. To enforce it, use CODEOWNERS or a small workflow in your repo; see [docs/configuration.md](docs/configuration.md#review-routing).
 
 Routing has its own mode, `ROUTING_MODE` (`shadow` or `enforce`), which defaults to `MODE`. In shadow mode the gate never labels: it reports "would have routed to a human" in the summary and records the result. The label write uses the **Issues: read & write** permission the app already has for comments, so there is no new permission.
 
@@ -75,7 +75,7 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 | Scenario | PR | Expected |
 |---|---|---|
 | 1 | drops a column, no ADR | FAILURE + ADR comment, routed to a human (label `needs-human-review`) |
-| 2 | same, with `docs/decisions/*.md` | SUCCESS, routed to a human (label `needs-human-review`) |
+| 2 | same, with `docs/decisions/*.md` | SUCCESS, routed to a human (label `needs-human-review`) + a comment saying why a person reviews it |
 | 3 | flagged feature, has reversal plan | SUCCESS, routed to an agent |
 | 4 | flagged feature, no plan | FAILURE + 3-line comment, routed to an agent |
 | 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too); routed to a human (`public-api-contract` is in `human_when`) |
