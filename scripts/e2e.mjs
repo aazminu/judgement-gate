@@ -2,7 +2,7 @@
 //
 // Starts, on free loopback ports and with no secrets: a scripted Jev (scripts/jev-stub.mjs), the mock GitHub
 // (scripts/mock-github.mjs) and the Worker via `wrangler dev`. Then sends signed webhooks for the demo scenarios
-// and asserts on what the mock GitHub recorded. Server logs go to .e2e-logs/. Exit code 0 only if every case passed.
+// and asserts on what the mock GitHub recorded. Server logs go to e2e-logs/. Exit code 0 only if every case passed.
 // Env: E2E_TIMEOUT_MS (whole run, default 120000).
 import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const LOG_DIR = path.join(ROOT, ".e2e-logs");
+const LOG_DIR = path.join(ROOT, "e2e-logs");
 const TOTAL_TIMEOUT_MS = Number(process.env.E2E_TIMEOUT_MS ?? 120_000);
 const CASE_TIMEOUT_MS = 20_000;
 const WEBHOOK_SECRET = "dev-secret";
@@ -358,7 +358,7 @@ async function main() {
     ],
     {},
   );
-  console.log(`e2e: jev ${jev}, github ${gh}, worker ${worker}; logs in .e2e-logs/`);
+  console.log(`e2e: jev ${jev}, github ${gh}, worker ${worker}; logs in e2e-logs/`);
 
   await Promise.all([
     waitReady("jev stub", stub, `${jev}/__control`),

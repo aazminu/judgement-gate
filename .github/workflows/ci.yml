@@ -42,3 +42,35 @@ jobs:
       # Bundles the Worker without deploying; needs no Cloudflare credentials.
       - name: Wrangler dry-run build
         run: npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/out"
+
+  # Runs the demo scenarios through the real Worker (`wrangler dev`) with a scripted Jev and the mock GitHub, all on
+  # loopback. No secrets and no network beyond localhost; see scripts/e2e.mjs.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: End-to-end scenarios
+        run: npm run e2e
+
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-logs
+          path: e2e-logs/
+          if-no-files-found: ignore
+          retention-days: 7

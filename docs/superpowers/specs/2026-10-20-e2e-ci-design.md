@@ -8,7 +8,7 @@ Everything is local and secret-free: no OpenRouter, no real Jev, no network beyo
 
 ## Moving parts
 
-`scripts/e2e.mjs` spawns three servers on free ports, each logging to `.e2e-logs/<name>.log`:
+`scripts/e2e.mjs` spawns three servers on free ports, each logging to `e2e-logs/<name>.log`:
 
 1. **Scripted Jev** (`scripts/jev-stub.mjs`). `POST /` takes `{model, state, questions}` and returns `{answers}`. It does not look at the PR text. The harness sets what to answer through `POST /__control {mode, answers}` before each scenario; `GET /__control` reads it back. `mode` is `ok`, `down` (HTTP 503) or `badsev` (every `choice` question that is not `synthetic_classification` gets an unrecognised value; one-way-door still answers normally).
 2. **Mock GitHub** (`scripts/mock-github.mjs`, extended). `GET /__recorded` returns the checks, comments and labels it received as JSON; `POST /__reset` clears them; `POST /__register {pr, files}` lets the harness give a PR number its own changed files, so every scenario run can use a fresh PR number. Console output and the demo behaviour are unchanged.
@@ -36,7 +36,7 @@ The seven demo scenarios as specified by the maintainer (1 Type 1 no ADR; 2 Type
 
 ## CI
 
-A separate `e2e` job in `ci.yml`: same checkout/setup-node/cache pattern and pinned versions, `timeout-minutes: 10`, `contents: read`, no secrets, `npm ci` then `npm run e2e`. On failure the logs are uploaded with `actions/upload-artifact` at a version that dependabot's grouped github-actions updates already track. The existing `ci` job is untouched. Whether the job is required is the maintainer's call.
+A separate `e2e` job in `ci.yml`: same checkout/setup-node/cache pattern and pinned versions, `timeout-minutes: 10`, `contents: read`, no secrets, `npm ci` then `npm run e2e`. The log directory is `e2e-logs/`, not a dot-directory, because `upload-artifact` skips hidden files by default. On failure the logs are uploaded with `actions/upload-artifact` at a version that dependabot's grouped github-actions updates already track. The existing `ci` job is untouched. Whether the job is required is the maintainer's call.
 
 ## Out of scope
 

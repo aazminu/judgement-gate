@@ -84,6 +84,8 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 
 The mock logs `LABEL added on #n: ...` when the gate labels a PR (scenarios 1 and 2 also match the `migrations/**` rule in the example config). Scenarios 5 to 7 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
 
+`npm run e2e` runs scenarios 1 to 7, plus Jev outage and bad-severity cases, against the real Worker (`wrangler dev`), the mock GitHub and a scripted stand-in for Jev, all on free local ports with no secrets, and checks what the mock recorded. It is what the `e2e` CI job runs; see [docs/operations.md](docs/operations.md#end-to-end-run).
+
 `npm run jev-smoke` calls Jev directly to verify your key. `npm test` runs the unit and end-to-end tests. `npm run typecheck` runs tsc.
 
 ## Deploy for real
