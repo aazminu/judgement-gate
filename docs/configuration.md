@@ -57,7 +57,7 @@ judgements:
 | `levels[].means` | What the level means, written as a rubric the model can apply. |
 | `applies_to` | Optional globs, as for any judgement. |
 
-The levels are a list so their order is explicit. `threshold`, `satisfied_by`, `why` and `fix` do not apply to a classifier and are rejected as unknown keys.
+The levels are a list so their order is explicit. `threshold`, `satisfied_by`, `why`, `fix` and `probes` do not apply to a classifier (it never fails, so there is nothing to teach) and are rejected as unknown keys.
 
 **Where it shows up.**
 
