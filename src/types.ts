@@ -4,6 +4,8 @@ export interface Env {
   GITHUB_APP_PRIVATE_KEY: string;
   JEV_API_KEY: string;
   MODE?: string;
+  /** Review routing mode (`shadow` or enforce); defaults to MODE. */
+  ROUTING_MODE?: string;
   JEV_MODEL?: string;
   JEV_API_URL?: string;
   JEV_TIMEOUT_MS?: string;
