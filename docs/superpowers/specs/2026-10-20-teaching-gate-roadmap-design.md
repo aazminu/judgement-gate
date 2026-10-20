@@ -1,6 +1,6 @@
 # Teaching gate: roadmap (reversibility, severity, review routing)
 
-Status: roadmap and decisions so far. Step 1 is not yet specified. Steps 2 and 3 have enough to build from, noted below. Each step gets its own plan before any code.
+Status: frozen 2026-10-20. Roadmap and decisions; every step has enough to plan from. Each step gets its own plan before any code.
 
 ## Intent
 
@@ -58,21 +58,44 @@ Both measurements go to Jev in the same request. There is no ordering between th
 - The agent block carries ids, reason codes, numbers and templates only: never PR text or diff content (docs/agents.md).
 - Privacy: any additional model call sends diff content to another model provider. README's data section must be updated if so.
 
-## Step 1: teaching message (not yet specified)
+## Step 1: teaching message, in two increments
 
-Direction agreed:
+Principles for both:
 
-- Keep the layers. The **agent layer stays deterministic** (templates and structured hints, as today). This avoids prompt injection and keeps the no-diff-content invariant.
-- Generated text is confined to the **human layer**.
-- It builds on the senior-authored `why` (the codified judgement), saying how it applies to this diff. It does not replace it.
-- It aims to point at the signal in the diff and ask the questions a senior would ask, not hand over the finished ADR or plan.
-- A second model call is needed (Jev cannot write prose). It runs after the verdict, is best-effort, and falls back to the static text on any failure or timeout.
+- Keep the layers. The **agent layer stays deterministic** (templates and structured hints, as today). This avoids prompt injection by untrusted diff text.
+- The message builds on the senior-authored `why` (the codified judgement). It does not replace it.
+- It poses the questions a senior would ask. It does not hand over the finished ADR or plan.
 
-Open, needs the project owner's input before this can be built:
+What a good senior asks (the model for the default content; the project owner's seniors may differ, which is why this is configurable). They point at one concrete fact in the diff and ask:
 
-- What a good senior would point at in the diff, and which questions they would ask, for type 1 changes (for example a schema migration) and type 2 changes. This is the core of the teaching content and has not been described yet.
-- Cost and behaviour on every push: the Worker re-runs on each `synchronize`. Whether to regenerate every time or only when the verdict or relevant diff changes (the Worker is stateless; the Cache API is available).
-- Which model and key, and the privacy wording.
+- **Who depends on it?** "This drops `orders.legacy_status`. What reads it: other services, jobs, reports?"
+- **What happens mid-deploy?** "Old code runs against the new schema during rollout. What breaks in that window?"
+- **What survives the undo?** "If we revert, is the data still there? If not, how do we get it back, and how long does that take?"
+- **How will we know?** "What tells us in the first hour that this was wrong, and who is watching?"
+- **What is the alternative?** "Could this be split so each step is reversible: add the new column, migrate, drop the old one later?"
+
+For type 2 the same instincts in lighter form: what signal says to roll back, what does the flag default to, does anything written by the new code outlive a rollback.
+
+### Step 1a: authored probing questions (no model call)
+
+- A judgement's author (a senior, via the org YAML) can add a short list of **probing questions** next to `why` and `fix`. Working name `probes`; the builder may rename.
+- They are shown in the comment as questions the author should answer in the ADR or PR description.
+- The built-in `one-way-door` ships sensible defaults (per reason: type 1, type 2, ambiguous), overridable from YAML.
+- Declarative judgements take a single list.
+- Because the probes are authored by trusted CODEOWNERS, they are safe to include in the **agent block** too (additive, so an agent answers them in the ADR or plan it writes). They contain no PR or diff content.
+- Validation in the existing style: a small maximum count and length; empty strings rejected; unknown keys still an error.
+- No new model call, no new privacy surface, no new permissions. It works with the gate's fail-open behaviour unchanged.
+
+### Step 1b: ground the questions in the diff (model call)
+
+- A second model call (Jev cannot write prose) runs after the verdict. It selects the relevant probes and ties each to the actual change ("`orders.legacy_status` is dropped in `migrations/0042.sql`; what reads it?"). It does not invent teaching.
+- Best-effort: on any failure or timeout the comment falls back to the static 1a text.
+- Output goes only in the human layer. The agent layer keeps the static probes.
+- Open at the time of writing, to settle when 1b is planned: which model and key; privacy wording in the README (diff content goes to a second provider call); whether to regenerate on every `synchronize` or only when the verdict or relevant diff changes (the Worker is stateless; the Cache API is available).
+
+### Known gap, not in scope
+
+Today the type 1 gate clears when any file under `docs/decisions/` exists; it does not check that the ADR addresses the questions. Checking quality is a possible later judgement, and a real limit on how much the gate can teach. Nothing in 1a or 1b changes it.
 
 ## Step 2: severity as a pluggable judgement
 
@@ -100,8 +123,10 @@ Depends on step 2. Decisions so far:
 ## Calls made without the project owner (flag any you disagree with)
 
 - Agent layer deterministic; generated text in the human layer only.
+- Teaching content is pluggable: authored `probes` in the org YAML, with built-in defaults, before any model is involved (step 1a).
+- Authored probes are included in the agent block (trusted, static, no diff content).
 - Severity is a separate classifier kind, not an extension of the yes/no declarative judgement.
 - No built-in severity rubric.
 - Routing is plain code over a company table, with a default of `human`.
 - Optional, off-by-default label for routing.
-- Order: teaching message, then severity, then routing. (Teaching message may be built in parallel with severity; routing waits for severity.)
+- Order: 1a, then 2, then 3 and 1b in either order. 1a and 2 both touch `src/types.ts`, `src/config.ts` and `src/comment.ts`, so build them one after the other, not in parallel. 1b needs 1a. 3 needs 2.
