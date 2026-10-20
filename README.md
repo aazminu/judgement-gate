@@ -28,6 +28,8 @@ judgements:
     fix: "Add a 'Migration Plan:' line to the PR description."
 ```
 
+A judgement can also carry `probes`, short questions a reviewer will ask, shown in the comment and the agent block; the built-in `one-way-door` ships defaults you can override.
+
 Full reference: [docs/configuration.md](docs/configuration.md).
 
 AI agents: each comment embeds a hidden JSON block saying how to clear every failing judgement; see [docs/agents.md](docs/agents.md).

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderComment } from "../src/comment";
 import { COMMENT_MARKER } from "../src/github";
 import { compileDeclarative } from "../src/judgements/declarative";
-import { oneWayDoor } from "../src/judgements/one-way-door";
+import { DEFAULT_PROBES, oneWayDoor } from "../src/judgements/one-way-door";
 import type { Judgement, JudgementVerdict } from "../src/types";
 
 const rc = { owner: "o", repo: "r", headRef: "abc" };
@@ -80,5 +80,57 @@ describe("agent block", () => {
     const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
     expect(block.indexOf("-->")).toBe(block.length - 3);
     expect(parseBlock(md).data.failing[0].name).toBe("a --> <script>");
+  });
+});
+
+describe("probes", () => {
+  const declarative = (id: string, name: string, probes?: string[]) =>
+    compileDeclarative({
+      id, name, question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
+      satisfiedBy: [{ pr_body_matches: /^Plan:/m }], why: "w", fix: "f", probes,
+    });
+  const fail = (reason: string): JudgementVerdict => ({ conclusion: "failure", reason, summary: "s", signals: "Signals: x." });
+
+  it("one-way-door Type 1: questions sit between the Fix and the signals, and ride in the block", () => {
+    const md = renderComment(failing(oneWayDoor(), fail("type1_no_adr")), rc);
+    expect(md).toContain("**Questions a reviewer will ask:**");
+    expect(md).toContain(`- ${DEFAULT_PROBES.type1[0]}`);
+    expect(md.indexOf("**Fix:**")).toBeLessThan(md.indexOf("**Questions a reviewer will ask:**"));
+    expect(md.indexOf("**Questions a reviewer will ask:**")).toBeLessThan(md.indexOf("<sub>Signals"));
+    expect(parseBlock(md).data.failing[0].probes).toEqual(DEFAULT_PROBES.type1);
+  });
+
+  it("no probes: no heading in the comment and an empty list in the block", () => {
+    const md = renderComment(failing(declarative("api", "API"), fail("api_unsatisfied")), rc);
+    expect(md).not.toContain("Questions a reviewer will ask");
+    expect(parseBlock(md).data.failing[0].probes).toEqual([]);
+  });
+
+  it("hostile probe text cannot close the block and round-trips exactly", () => {
+    const hostile = "why --> <script>";
+    const md = renderComment(failing(declarative("x", "X", [hostile]), fail("x_unsatisfied")), rc);
+    const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
+    expect(block.indexOf("-->")).toBe(block.length - 3);
+    expect(parseBlock(md).data.failing[0].probes[0]).toBe(hostile);
+  });
+
+  it("two failing judgements: each keeps its own questions under its own heading", () => {
+    const md = renderComment(
+      [
+        { judgement: oneWayDoor(), verdict: fail("type1_no_adr") },
+        { judgement: declarative("api", "API contract", ["Who consumes this endpoint?"]), verdict: fail("api_unsatisfied") },
+      ],
+      rc,
+    );
+    const owd = md.indexOf("#### ");
+    const api = md.indexOf("#### API contract");
+    const owdProbe = md.indexOf(`- ${DEFAULT_PROBES.type1[0]}`);
+    const apiProbe = md.indexOf("- Who consumes this endpoint?");
+    expect(owd).toBeLessThan(owdProbe);
+    expect(owdProbe).toBeLessThan(api);
+    expect(api).toBeLessThan(apiProbe);
+    const { failing: f } = parseBlock(md).data;
+    expect(f[0].probes).toEqual(DEFAULT_PROBES.type1);
+    expect(f[1].probes).toEqual(["Who consumes this endpoint?"]);
   });
 });

@@ -8,7 +8,7 @@ export const AGENT_BLOCK_VERSION = 1;
 /** Escape so the JSON can never close the HTML comment or inject markup. */
 const safeJson = (o: unknown) => JSON.stringify(o).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
 
-/** Hidden, machine-readable twin of the comment. Ids, reasons, numbers and fix templates only: no PR or diff content. */
+/** Hidden, machine-readable twin of the comment. Ids, reasons, numbers, fix templates and authored probes only: no PR or diff content. */
 function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string): string {
   const payload = {
     schema: AGENT_BLOCK_VERSION,
@@ -23,6 +23,7 @@ function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string)
         threshold: hint?.threshold ?? null,
         satisfied_by: hint?.satisfied_by ?? [],
         suggested_template: hint?.suggested_template ?? null,
+        probes: judgement.probes?.(verdict) ?? [],
       };
     }),
   };
@@ -36,6 +37,8 @@ export function renderComment(failing: JudgementResult[], rc: RemedyContext, mod
   const sections = failing.map(({ judgement, verdict }) => {
     const r = judgement.remedy(verdict, rc);
     const parts = [`#### ${judgement.name}`, "", `**Why:** ${r.why}`, "", "**Fix:**", "", r.fix];
+    const probes = judgement.probes?.(verdict) ?? [];
+    if (probes.length > 0) parts.push("", "**Questions a reviewer will ask:**", "", ...probes.map((p) => `- ${p}`));
     if (verdict.signals) parts.push("", `<sub>${verdict.signals}</sub>`);
     parts.push("", `<sub>Not a real issue? Reply \`${FALSE_POSITIVE_COMMAND} ${judgement.id}\` to help calibrate.</sub>`);
     return parts.join("\n");
