@@ -91,6 +91,8 @@ export interface JudgementVerdict {
   signals?: string;
   /** Numbers for calibration logging only; never affects the verdict. */
   metrics?: { probability?: number; confidence?: number; cleared?: boolean };
+  /** Set by a classifier judgement: the org-defined level it chose. Never PR or model text: always one of the configured level ids. */
+  classification?: { level: string; confidence?: number };
 }
 
 export interface RemedyContext {
@@ -120,6 +122,10 @@ export interface Judgement {
   appliesTo?: string[];
   /** Send question keys without the `${id}.` prefix. Only the built-in one-way-door uses this, to keep its original Jev contract. */
   unprefixedKeys?: boolean;
+  /** A classifier labels the PR and never fails it, so it never fires. Default: a yes/no judgement that can flag. */
+  kind?: "classifier";
+  /** A missing or malformed answer is dropped instead of failing the whole Jev request; `decide` must cope with absent answers. */
+  optionalAnswers?: boolean;
   /** Every reason code `decide` can return. */
   reasons: string[];
   questions: Record<string, JevQuestion>;
