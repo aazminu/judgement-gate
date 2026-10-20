@@ -256,6 +256,19 @@ routing:
     expect(block.routing.label).toBe("needs-human-review");
   });
 
+  it("the remediation comment shows the routing line in the right mode", async () => {
+    const enforced = fakeNet({ config: { status: 404 }, answers: type1 });
+    await processPullRequest(prEvent(), await makeEnv(), enforced.fetchFn);
+    const line = postedComment(enforced.calls)!.split("\n").find((l) => l.startsWith("**Review routing:**"))!;
+    expect(line).toContain("human review recommended");
+    expect(line).toContain("`needs-human-review`");
+
+    const shadow = fakeNet({ config: { status: 404 }, answers: type1 });
+    await processPullRequest(prEvent(), await makeEnv({ ROUTING_MODE: "shadow" }), shadow.fetchFn);
+    expect(postedComment(shadow.calls)).toContain("shadow");
+    expect(labelCalls(shadow.calls)).toHaveLength(0);
+  });
+
   it("records one routing data point with the routing mode and outcome", async () => {
     const points: { blobs?: string[] }[] = [];
     const sink: AnalyticsSink = { writeDataPoint: (p) => void points.push(p) };
