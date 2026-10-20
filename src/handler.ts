@@ -1,6 +1,6 @@
 import { parseFalsePositive, record } from "./analytics";
 import { aggregate, type JudgementResult } from "./aggregate";
-import { loadJudgements } from "./config";
+import { loadGateConfig } from "./config";
 import { renderComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
@@ -71,7 +71,7 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
   let configNote = "";
   try {
     const ctx = assembleContext(ev, files);
-    const { judgements: all, note } = await loadJudgements(gh, owner, env);
+    const { judgements: all, note } = await loadGateConfig(gh, owner, env);
     if (note) configNote = `\n\n_${note}_`;
     const applicable = all.filter((j) => appliesToFiles(j.appliesTo, files));
     evaluated = applicable;

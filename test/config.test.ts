@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { ConfigError, parseConfig } from "../src/config";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearConfigCache, ConfigError, loadGateConfig, parseConfig, parseGateConfig } from "../src/config";
 import exampleYaml from "../examples/judgement-gate.yml?raw";
-import type { JevAnswers, PrContext } from "../src/types";
+import type { GitHubClient } from "../src/github";
+import { DEFAULT_LABEL, DEFAULT_RULES } from "../src/routing";
+import type { Env, JevAnswers, PrContext } from "../src/types";
 
 const defaults = { confidenceThreshold: 0.75 };
 
@@ -187,4 +189,174 @@ describe("unknown root keys", () => {
       expect(() => parseConfig(text, defaults)).toThrow(/unknown (top-level )?key/);
     },
   );
+});
+
+describe("routing block", () => {
+  const spec = (routing: string) => `${SPEC_EXAMPLE}\nrouting:\n${routing}\n`;
+  const VALID_IDS = ["one-way-door", "public-api-contract"];
+
+  it("parseConfig accepts the routing top-level key", () => {
+    expect(() => parseConfig(SPEC_EXAMPLE + "\nrouting:\n  label: x\n", defaults)).not.toThrow();
+  });
+
+  it.each(["", "# comment only", SPEC_EXAMPLE, SPEC_EXAMPLE + "\nrouting:\n"])("no routing config yields the defaults for %j", (text) => {
+    const { routing } = parseGateConfig(text, defaults);
+    expect(routing).toEqual({ status: "ok", rules: DEFAULT_RULES, label: DEFAULT_LABEL });
+  });
+
+  it("appends human_when entries after the default rules", () => {
+    const { routing } = parseGateConfig(spec('  human_when:\n    - files: ["infra/**"]'), defaults);
+    expect(routing).toEqual({ status: "ok", rules: [...DEFAULT_RULES, { files: ["infra/**"] }], label: DEFAULT_LABEL });
+  });
+
+  it("accepts judgement and judgement+reason entries, including reasons of custom judgements", () => {
+    const { routing } = parseGateConfig(
+      spec(
+        [
+          "  human_when:",
+          "    - judgement: public-api-contract",
+          "    - judgement: public-api-contract",
+          "      reason: public-api-contract_unsatisfied",
+          "    - judgement: one-way-door",
+          "      reason: type1_adr",
+        ].join("\n"),
+      ),
+      defaults,
+    );
+    expect(routing).toEqual({
+      status: "ok",
+      rules: [
+        ...DEFAULT_RULES,
+        { judgement: "public-api-contract" },
+        { judgement: "public-api-contract", reason: "public-api-contract_unsatisfied" },
+        { judgement: "one-way-door", reason: "type1_adr" },
+      ],
+      label: DEFAULT_LABEL,
+    });
+  });
+
+  it("include_defaults: false keeps only the owner's entries", () => {
+    const { routing } = parseGateConfig(spec('  include_defaults: false\n  human_when:\n    - files: ["infra/**"]'), defaults);
+    expect(routing).toEqual({ status: "ok", rules: [{ files: ["infra/**"] }], label: DEFAULT_LABEL });
+  });
+
+  it("include_defaults: false with no entries means no rules", () => {
+    const { routing } = parseGateConfig(spec("  include_defaults: false"), defaults);
+    expect(routing).toEqual({ status: "ok", rules: [], label: DEFAULT_LABEL });
+  });
+
+  it("include_defaults: true is the same as omitting it", () => {
+    const { routing } = parseGateConfig(spec("  include_defaults: true"), defaults);
+    expect(routing).toEqual({ status: "ok", rules: DEFAULT_RULES, label: DEFAULT_LABEL });
+  });
+
+  it("uses a configured label", () => {
+    const { routing } = parseGateConfig(spec("  label: ready-for-people"), defaults);
+    expect(routing).toMatchObject({ status: "ok", label: "ready-for-people" });
+  });
+
+  it("accepts a 50 character label", () => {
+    const { routing } = parseGateConfig(spec(`  label: ${"a".repeat(50)}`), defaults);
+    expect(routing).toMatchObject({ status: "ok", label: "a".repeat(50) });
+  });
+
+  it("validates against the judgements in force (an unconfigured judgement is unknown)", () => {
+    const text = "judgements:\n  - use: one-way-door\nrouting:\n  human_when:\n    - judgement: public-api-contract";
+    expect(parseGateConfig(text, defaults).routing).toMatchObject({
+      status: "config_error",
+      message: expect.stringMatching(/unknown judgement "public-api-contract"/),
+    });
+  });
+
+  const invalid: [string, string, RegExp][] = [
+    ["unknown key", "  human-when:\n    - files: ['a/**']", /human-when/],
+    ["entry with two keys", "  human_when:\n    - judgement: one-way-door\n      files: ['a/**']", /exactly one/],
+    ["entry with an unknown key", "  human_when:\n    - bogus: 1", /exactly one/],
+    ["entry that is not a mapping", "  human_when:\n    - nope", /exactly one/],
+    ["reason without judgement", "  human_when:\n    - reason: ambiguous", /exactly one/],
+    ["unknown judgement", "  human_when:\n    - judgement: nope", /unknown judgement "nope"/],
+    ["unknown reason", "  human_when:\n    - judgement: one-way-door\n      reason: ambigous", /unknown reason "ambigous"/],
+    ["empty files list", "  human_when:\n    - files: []", /non-empty/],
+    ["non-string glob", "  human_when:\n    - files: ['a', 3]", /files/],
+    ["empty glob", "  human_when:\n    - files: ['']", /files/],
+    ["include_defaults not a boolean", '  include_defaults: "no"', /boolean/],
+    ["empty label", '  label: ""', /label/],
+    ["blank label", '  label: "   "', /label/],
+    ["non-string label", "  label: 5", /label/],
+    ["label over 50 characters", `  label: ${"a".repeat(51)}`, /50/],
+    ["human_when not a list", "  human_when: files", /list/],
+    ["routing not a mapping", "  - a", /mapping/],
+  ];
+  it.each(invalid)("%s is a routing config_error that keeps the valid judgements", (_name, routing, message) => {
+    const out = parseGateConfig(spec(routing), defaults);
+    expect(out.routing.status).toBe("config_error");
+    expect((out.routing as { message: string }).message).toMatch(message);
+    expect(out.routing.label).toBe(DEFAULT_LABEL);
+    expect(out.judgements.map((j) => j.id)).toEqual(VALID_IDS);
+  });
+
+  it("a scalar routing value is a config_error", () => {
+    expect(parseGateConfig(`${SPEC_EXAMPLE}\nrouting: 5\n`, defaults).routing.status).toBe("config_error");
+  });
+
+  it("invalid judgements still throw, routing or not", () => {
+    expect(() => parseGateConfig("judgements: {}\nrouting:\n  label: x", defaults)).toThrow(ConfigError);
+  });
+
+  it("broken YAML throws ConfigError", () => {
+    expect(() => parseGateConfig("judgements: [", defaults)).toThrow(ConfigError);
+  });
+});
+
+describe("loadGateConfig", () => {
+  const env = { CONFIDENCE_THRESHOLD: "0.75" } as Env;
+  const ghWith = (getFileContents: () => Promise<string | null>) => ({ getFileContents }) as unknown as GitHubClient;
+
+  beforeEach(() => clearConfigCache());
+
+  it("a missing file yields the default routing and no note", async () => {
+    const out = await loadGateConfig(ghWith(async () => null), "o", env);
+    expect(out.routing).toEqual({ status: "ok", rules: DEFAULT_RULES, label: DEFAULT_LABEL });
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(out.note).toBeUndefined();
+  });
+
+  it("loads judgements and routing from the same file", async () => {
+    const out = await loadGateConfig(ghWith(async () => SPEC_EXAMPLE + "\nrouting:\n  label: x\n"), "o", env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
+    expect(out.routing).toMatchObject({ status: "ok", label: "x" });
+    expect(out.note).toBeUndefined();
+  });
+
+  it("an invalid routing block keeps the owner's judgements and adds no note", async () => {
+    const out = await loadGateConfig(ghWith(async () => SPEC_EXAMPLE + "\nrouting:\n  bogus: 1\n"), "o", env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
+    expect(out.routing.status).toBe("config_error");
+    expect(out.note).toBeUndefined();
+  });
+
+  it("a read failure falls back and marks routing unavailable", async () => {
+    const getFileContents = vi.fn().mockRejectedValue(new Error("boom"));
+    const out = await loadGateConfig(ghWith(getFileContents), "o", env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(out.note).toContain("fell back");
+    expect(out.routing.status).toBe("unavailable");
+    expect((out.routing as { message: string }).message).not.toBe("");
+    expect(out.routing.label).toBe(DEFAULT_LABEL);
+  });
+
+  it("invalid YAML falls back with a note and a routing config_error", async () => {
+    const out = await loadGateConfig(ghWith(async () => "judgements: ["), "o", env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(out.note).toContain("fell back");
+    expect(out.routing.status).toBe("config_error");
+    expect(out.routing.label).toBe(DEFAULT_LABEL);
+  });
+
+  it("invalid judgements fall back with a note and a routing config_error", async () => {
+    const out = await loadGateConfig(ghWith(async () => "judgements:\n  - use: nope"), "o", env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(out.note).toContain("fell back");
+    expect(out.routing.status).toBe("config_error");
+  });
 });
