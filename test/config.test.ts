@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache, ConfigError, loadGateConfig, parseConfig, parseGateConfig } from "../src/config";
 import exampleYaml from "../examples/judgement-gate.yml?raw";
+import { DEFAULT_PROBES } from "../src/judgements/one-way-door";
 import type { GitHubClient } from "../src/github";
 import { DEFAULT_LABEL, DEFAULT_RULES } from "../src/routing";
-import type { Env, JevAnswers, PrContext } from "../src/types";
+import type { Env, JevAnswers, JudgementVerdict, PrContext } from "../src/types";
 
 const defaults = { confidenceThreshold: 0.75 };
+const verdict = (reason: string): JudgementVerdict => ({ conclusion: "failure", reason, summary: "s", fired: true });
 
 const SPEC_EXAMPLE = `
 judgements:
@@ -113,6 +115,8 @@ describe("declarative decide", () => {
   });
 });
 
+const useProbes = (probes: string) => `judgements:\n  - use: one-way-door\n    ${probes}`;
+
 const decl = (extra: Record<string, unknown> = {}, drop: string[] = []) => {
   const base: Record<string, unknown> = {
     id: "x",
@@ -148,6 +152,19 @@ describe("parseConfig: invalid throws ConfigError", () => {
     ["missing why", decl({}, ["why"])],
     ["non-string fix", decl({ fix: 5 })],
     ["id collides with built-in", decl({ id: "one-way-door" })],
+    ["probes as a bare string", decl({ probes: "nope" })],
+    ["empty probes", decl({ probes: [] })],
+    ["too many probes", decl({ probes: Array.from({ length: 8 }, (_, i) => `Q${i}?`) })],
+    ["empty probe", decl({ probes: ["ok?", ""] })],
+    ["blank probe", decl({ probes: ["ok?", "   "] })],
+    ["overlong probe", decl({ probes: ["a".repeat(301)] })],
+    ["non-string probe", decl({ probes: [5] })],
+    ["use with probes as a list", useProbes("probes: [x]")],
+    ["use with unknown probes key", useProbes(`probes:\n      ambiguous: [x]`)],
+    ["use with empty probes list", useProbes(`probes:\n      type1: []`)],
+    ["use with empty probes mapping", useProbes("probes: {}")],
+    ["use with null type1", useProbes(`probes:\n      type1: null`)],
+    ["declarative with null probes", decl({ probes: null })],
   ];
   it.each(cases)("%s", (_name, text) => {
     expect(() => parseConfig(text, defaults)).toThrow(ConfigError);
@@ -156,12 +173,69 @@ describe("parseConfig: invalid throws ConfigError", () => {
   it("names the offending judgement in the message", () => {
     expect(() => parseConfig(decl({ threshold: 2 }), defaults)).toThrow(/x.*threshold/);
   });
+
+  it("names the offending judgement and key for bad probes", () => {
+    expect(() => parseConfig(decl({ probes: "nope" }), defaults)).toThrow(/x.*probes/);
+  });
+
+  it.each([
+    ["an HTML comment opener", "see <!-- here"],
+    ["an HTML comment closer", "ends --> here"],
+    ["a newline", "line one\nline two"],
+    ["a carriage return", "line one\rline two"],
+  ])("rejects a probe containing %s", (_name, probe) => {
+    expect(() => parseConfig(decl({ probes: [probe] }), defaults)).toThrow(/probes/);
+    expect(() => parseConfig(JSON.stringify({ judgements: [{ use: "one-way-door", probes: { type1: [probe] } }] }), defaults)).toThrow(/probes/);
+  });
+
+  it("hints differ: built-in labels keep the defaults when omitted, declarative asks none", () => {
+    expect(() => parseConfig(useProbes(`probes:\n      type1: []`), defaults)).toThrow(/omit it to keep the built-in questions/);
+    expect(() => parseConfig(decl({ probes: [] }), defaults)).toThrow(/omit it to ask none/);
+  });
+});
+
+describe("probes", () => {
+  it("declarative probes are returned verbatim, trimmed", () => {
+    const [j] = parseConfig(decl({ probes: ["Who else calls this?", "  How would we know?  "] }), defaults);
+    expect(j.probes!(verdict("x_unsatisfied"))).toEqual(["Who else calls this?", "How would we know?"]);
+  });
+  it("declarative without probes gives an empty list", () => {
+    const [j] = parseConfig(decl(), defaults);
+    expect(j.probes!(verdict("x_unsatisfied"))).toEqual([]);
+  });
+  it("use: one-way-door overrides one list and keeps the default for the other", () => {
+    const [j] = parseConfig(useProbes(`probes:\n      type1: ["Custom type 1?"]`), defaults);
+    expect(j.probes!(verdict("type1_no_adr"))).toEqual(["Custom type 1?"]);
+    expect(j.probes!(verdict("ambiguous"))).toEqual(["Custom type 1?"]);
+    expect(j.probes!(verdict("type2_no_plan"))).toEqual(DEFAULT_PROBES.type2);
+  });
+  it("use: one-way-door type2 override keeps the default type1", () => {
+    const [j] = parseConfig(useProbes(`probes:\n      type2: ["Custom type 2?"]`), defaults);
+    expect(j.probes!(verdict("type2_no_plan"))).toEqual(["Custom type 2?"]);
+    expect(j.probes!(verdict("type1_no_adr"))).toEqual(DEFAULT_PROBES.type1);
+  });
+  it("returned arrays are copies: mutating one does not change the next call", () => {
+    const [d] = parseConfig(decl({ probes: ["Q one?"] }), defaults);
+    d.probes!(verdict("x_unsatisfied")).push("injected");
+    expect(d.probes!(verdict("x_unsatisfied"))).toEqual(["Q one?"]);
+    const [o] = parseConfig(useProbes(`probes:\n      type1: ["T1?"]`), defaults);
+    o.probes!(verdict("type1_no_adr")).push("injected");
+    expect(o.probes!(verdict("type1_no_adr"))).toEqual(["T1?"]);
+    const w = parseConfig(useProbes("probes:\n      type2: [\"T2?\"]"), defaults)[0];
+    w.probes!(verdict("type1_no_adr")).push("injected");
+    expect(DEFAULT_PROBES.type1).not.toContain("injected");
+    expect(w.probes!(verdict("type1_no_adr"))).toEqual(DEFAULT_PROBES.type1);
+  });
 });
 
 describe("shipped example", () => {
   it("examples/judgement-gate.yml parses", () => {
     const list = parseConfig(exampleYaml, defaults);
     expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
+  });
+  it("public-api-contract ships with probes", () => {
+    const api = parseConfig(exampleYaml, defaults).find((j) => j.id === "public-api-contract")!;
+    expect(api.probes!(verdict("public-api-contract_unsatisfied")).length).toBeGreaterThanOrEqual(2);
   });
 
   it("examples/judgement-gate.yml has a routing block that parses to ok", () => {
