@@ -71,6 +71,24 @@ describe("agent block", () => {
     expect(f.suggested_template).toBeNull();
   });
 
+  it("reports routing in the block when given, leaving schema at 1", () => {
+    const routing = { route: "human" as const, reasons: ["one-way-door flagged"], label: "needs-human-review" };
+    const { version, data } = parseBlock(
+      renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true }), rc, "enforce", routing),
+    );
+    expect(version).toBe(1);
+    expect(data.schema).toBe(1);
+    expect(data.routing).toEqual(routing);
+  });
+
+  it("omits the routing key entirely when no routing is given", () => {
+    const { data } = parseBlock(
+      renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true }), rc, "enforce"),
+    );
+    expect(data.schema).toBe(1);
+    expect("routing" in data).toBe(false);
+  });
+
   it("cannot be broken out of by hostile text", () => {
     const j = compileDeclarative({
       id: "x", name: "a --> <script>", question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
