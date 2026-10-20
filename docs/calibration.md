@@ -17,6 +17,7 @@ Only ids, numbers and enum strings are stored. Never the PR title, body, diff or
 | `blob5` | `flagged`, `passed`, `cleared` (over threshold but satisfied by an ADR or `satisfied_by` rule), `degraded` (Jev failed), `false_positive`; for `routing`: `human`, `agent` or `unavailable` |
 | `blob6` | verdict reason, such as `type1_no_adr`; for `routing`, the reasons joined with `; ` (at most 256 characters), such as `one-way-door flagged; files: migrations/**` |
 | `blob7` | commenter's `author_association` (feedback only) |
+| `blob8` | the level a classifier such as `severity` chose, for example `P1`. Present only on those rows; other rows have no `blob8` |
 | `double1` | PR number |
 | `double2` | flagged, 0 or 1 |
 | `double3` | probability the judgement fired on (`-1` if none). For one-way-door this is the one-way boundary probability |
@@ -106,6 +107,23 @@ Latency is the same for every judgement in one PR, so this slightly over-weights
 6. A high `degraded_rate` means the data is thin. Fix `JEV_TIMEOUT_MS` or the Jev connection before trusting the rates.
 
 Note that `cleared` rows are PRs the model would have flagged but the author had already satisfied. They show the rule working, not an error.
+
+## Severity
+
+A classifier such as `severity` writes an ordinary `evaluation` row per PR, with `blob5 = 'passed'`, `blob6` = `<id>_classified` or `<id>_unreported`, the confidence in `double4` and the level in `blob8`. It never flags, so its flag rate is always 0; the useful numbers are the spread of levels and how often it reports none.
+
+```sql
+SELECT blob8 AS level,
+       sum(_sample_interval) AS prs,
+       avg(double4) AS avg_confidence
+FROM judgement_gate
+WHERE blob1 = 'evaluation' AND blob3 = 'severity' AND blob6 = 'severity_classified'
+  AND timestamp > NOW() - INTERVAL '14' DAY
+GROUP BY level
+ORDER BY level
+```
+
+A high share of `severity_unreported` means the model is not choosing one of your levels: reword the `means` texts so they are easier to tell apart. A distribution that is almost all one level usually means the rubric does not separate your PRs.
 
 ## Review routing
 

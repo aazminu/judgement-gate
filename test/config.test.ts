@@ -161,7 +161,8 @@ describe("parseConfig: invalid throws ConfigError", () => {
 describe("shipped example", () => {
   it("examples/judgement-gate.yml parses", () => {
     const list = parseConfig(exampleYaml, defaults);
-    expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
+    expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract", "severity"]);
+    expect(list.find((j) => j.id === "severity")!.kind).toBe("classifier");
   });
 
   it("examples/judgement-gate.yml has a routing block that parses to ok", () => {

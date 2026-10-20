@@ -22,6 +22,23 @@ judgements:
     why: "Consumers cannot roll back with us. Breaking changes need a migration plan."
     fix: "Add a 'Migration Plan:' line to the PR description, or a note under docs/api-changes/."
 
+  # Classifier: labels the PR with a level you define, and never fails the check. Order the levels most
+  # severe first. There is no built-in rubric: what P0 means is for your org to write.
+  - id: severity
+    name: Severity
+    classify:
+      question: "If this change is wrong, how bad is the impact?"
+      levels:
+        - id: P0
+          means: "customer-facing outage, data loss, or security exposure"
+        - id: P1
+          means: "major feature broken for many users, no workaround"
+        - id: P2
+          means: "degraded or partial; a workaround exists"
+        - id: P3
+          means: "internal or cosmetic; no customer impact"
+    applies_to: ["services/**"]          # optional; omit to classify every PR
+
 # Optional. Who should review: a person or an agent. The gate only recommends: it adds a PR label and
 # never changes the check result. Enforce it with CODEOWNERS or a workflow (docs/configuration.md).
 # Without this block the defaults below still apply. The `routing:` block is read from the default

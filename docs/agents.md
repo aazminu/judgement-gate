@@ -17,6 +17,7 @@ One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgeme
 | `failing[].probability`, `.threshold` | Model probability and flag threshold, or `null`. |
 | `failing[].satisfied_by` | Ways to clear it; **any one** is enough (see below). |
 | `failing[].suggested_template` | `{target: "pr_body"\|"file", path?, content}` to paste, or `null`. |
+| `classification` | Levels reported by classifier judgements such as `severity`. Optional: absent when none reported a level. See [Classification](#classification). |
 | `routing` | Who the gate recommends reviews this PR. Optional: absent from older comments. See below. |
 | `routing.route` | `human`, `agent` or `unavailable` (routing could not be decided). |
 | `routing.reasons` | Array of short strings, for example `one-way-door flagged`, `one-way-door: ambiguous`, `files: migrations/**`. Built from config ids, globs, reason codes and config-error text, and never contains PR content. Empty for `agent`. |
@@ -37,6 +38,22 @@ Built-in `one-way-door`: `type1_no_adr` → `file_added` `docs/decisions/*.md`; 
 `routing.route` is a recommendation and does not change the check. It reports the result whether or not the label is applied: in shadow routing mode the gate does not label, but the block still shows what it would have done.
 
 If `route` is `human`, clearing a failure does not remove the need for a human. Fixing the judgement turns the check green; a person still reviews the PR. Leave the label alone: the gate never removes it, and only a person should. Say in the PR description what the human should look at.
+
+## Classification
+
+`classification` is added when a judgement that labels the PR (for example `severity`) reported a level. Like `routing`, it appears only in a comment that is posted because a judgement failed; a PR with nothing failing gets no comment. Schema stays at 1: the field is additive and absent when no classifier reported a level.
+
+```json
+"classification": [{ "id": "severity", "level": "P1", "confidence": 0.82 }]
+```
+
+| Field | Meaning |
+|---|---|
+| `classification[].id` | The classifier's judgement id. |
+| `classification[].level` | One of the level ids the org configured, such as `P1`. Never free text from the model or the PR. |
+| `classification[].confidence` | The model's confidence, or `null`. Not a calibrated probability. |
+
+It is information only. A classifier never appears in `failing`, has nothing to satisfy, and does not change what you must do. If you want to know what the level means, ask a human or read the org's `.github/judgement-gate.yml`. A classifier that could not decide is simply absent from the array.
 
 ## How an agent should react
 
