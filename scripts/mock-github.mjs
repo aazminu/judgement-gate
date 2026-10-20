@@ -38,6 +38,10 @@ const server = http.createServer(async (req, res) => {
   if ((m = url.pathname.match(/\/pulls\/(\d+)\/files$/))) {
     return send(url.searchParams.get("page") === "1" ? (SCENARIOS[m[1]]?.files ?? []) : []);
   }
+  if (req.method === "POST" && (m = url.pathname.match(/\/issues\/(\d+)\/labels$/))) {
+    log(`LABEL added on #${m[1]}: ${(body?.labels ?? []).join(", ")}`);
+    return send([]);
+  }
   if ((m = url.pathname.match(/\/issues\/(\d+)\/comments$/))) {
     const list = comments.get(m[1]) ?? [];
     if (req.method === "GET") return send(list);

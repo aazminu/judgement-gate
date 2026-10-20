@@ -163,6 +163,15 @@ describe("shipped example", () => {
     const list = parseConfig(exampleYaml, defaults);
     expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
   });
+
+  it("examples/judgement-gate.yml has a routing block that parses to ok", () => {
+    const { routing } = parseGateConfig(exampleYaml, defaults);
+    expect(routing.status).toBe("ok");
+    if (routing.status !== "ok") return;
+    expect(routing.rules).toContainEqual({ files: ["migrations/**", "infra/**"] });
+    expect(routing.rules).toContainEqual({ judgement: "public-api-contract" });
+    expect(routing.rules).toContainEqual({ judgement: "one-way-door", reason: "ambiguous" });
+  });
 });
 
 describe("review fixes", () => {

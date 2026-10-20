@@ -30,6 +30,14 @@ judgements:
 
 Full reference: [docs/configuration.md](docs/configuration.md).
 
+## Review routing
+
+Besides the check, the gate recommends who should review the PR: a **human** or an **agent**. By default a Type 1 result (a one-way door, even one with an ADR) or an ambiguous one routes to a human. An ADR shows that someone wrote the decision down, not that someone accountable accepted it, so a person still needs to look. You can add your own rules in the same YAML file, by judgement, by reason code or by changed-file glob.
+
+Routing recommends and never changes the check: pass, fail and neutral are the same with or without it. A `human` result adds a PR label (default `needs-human-review`) and a `Review routing:` line to the check summary. The gate never removes the label; a person does. The gate does not require the review itself. To enforce it, use CODEOWNERS or a small workflow in your repo; see [docs/configuration.md](docs/configuration.md#review-routing).
+
+Routing has its own mode, `ROUTING_MODE` (`shadow` or `enforce`), which defaults to `MODE`. In shadow mode the gate never labels: it reports "would have routed to a human" in the summary and records the result. The label write uses the **Issues: read & write** permission the app already has for comments, so there is no new permission.
+
 AI agents: each comment embeds a hidden JSON block saying how to clear every failing judgement; see [docs/agents.md](docs/agents.md).
 
 ## Demo in 2 minutes (no GitHub App needed)
@@ -46,20 +54,20 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 
 | Scenario | PR | Expected |
 |---|---|---|
-| 1 | drops a column, no ADR | FAILURE + ADR comment |
-| 2 | same, with `docs/decisions/*.md` | SUCCESS |
-| 3 | flagged feature, has reversal plan | SUCCESS |
-| 4 | flagged feature, no plan | FAILURE + 3-line comment |
+| 1 | drops a column, no ADR | FAILURE + ADR comment, routed to a human (label `needs-human-review`) |
+| 2 | same, with `docs/decisions/*.md` | SUCCESS, routed to a human (label `needs-human-review`) |
+| 3 | flagged feature, has reversal plan | SUCCESS, routed to an agent |
+| 4 | flagged feature, no plan | FAILURE + 3-line comment, routed to an agent |
 | 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too) |
 | 6 | same, with `Migration Plan:` in the body | API-contract judgement passes; one-way door can still read "Ambiguous" and fail the check |
 
-Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
+The mock logs `LABEL added on #n: ...` when the gate labels a PR (scenarios 1 and 2 also match the `migrations/**` rule in the example config). Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
 
 `npm run jev-smoke` calls Jev directly to verify your key. `npm test` runs the unit and end-to-end tests. `npm run typecheck` runs tsc.
 
 ## Deploy for real
 
-1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments), **Contents: read** (to read the org judgement config), subscribe to **Pull request** and **Issue comment** (the second lets people reply `/judgement-gate false-positive <id>` to a flag; no new permission needed, and without it only the false-positive log is lost). Install it on the org or a test repo, including the org's `.github` repo if you use org-level judgements.
+1. Create a GitHub App: webhook URL `https://<worker>.workers.dev/webhook`, a webhook secret, permissions **Checks: read & write**, **Pull requests: read**, **Issues: read & write** (comments and the review-routing label), **Contents: read** (to read the org judgement config), subscribe to **Pull request** and **Issue comment** (the second lets people reply `/judgement-gate false-positive <id>` to a flag; no new permission needed, and without it only the false-positive log is lost). Install it on the org or a test repo, including the org's `.github` repo if you use org-level judgements.
 2. Convert the downloaded key to PKCS#8 (Web Crypto cannot import the PKCS#1 key GitHub gives you):
    `openssl pkcs8 -topk8 -nocrypt -in app.pem -out app-pkcs8.pem`
 3. Set secrets, then deploy:
