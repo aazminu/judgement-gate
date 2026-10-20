@@ -184,6 +184,18 @@ const agent = (e, r) => {
 };
 const noComment = (e, r) => e.eq("comment count", r.comments.length, 0);
 const oneComment = (e, r) => e.eq("comment count", r.comments.length, 1);
+// A passing PR routed to a human gets one comment saying why: the routing line, the cleared judgement's why, and a block with nothing failing.
+const routingComment = (e, r, why) => {
+  oneComment(e, r);
+  const c = r.comments[0] ?? "";
+  e.has("comment heading", c, "passed the checks, routed to a human reviewer");
+  e.has("comment routing line", c.split("\n").find((l) => l.startsWith("**Review routing:**")), "human review recommended");
+  e.has("comment why", c, why);
+  e.lacks("comment", c, "**Fix:**");
+  e.eq("block present", r.block !== null, true);
+  e.eq("block failing", r.block?.failing, []);
+  e.eq("block routing.route", r.block?.routing?.route, "human");
+};
 
 const CASES = [
   {
@@ -206,7 +218,8 @@ const CASES = [
     check(e, r) {
       e.eq("conclusion", r.check.conclusion, "success");
       human(e, r);
-      noComment(e, r);
+      routingComment(e, r, "The ADR records the reasoning");
+      e.eq("comment bullets", bullets(r.comments[0] ?? ""), 5);
     },
   },
   {
@@ -250,7 +263,9 @@ const CASES = [
       e.eq("conclusion", r.check.conclusion, "success");
       e.has("summary", r.check.summary, "Severity (P2)");
       human(e, r); // the judgement fired, so routing is human even though the author cleared it
-      noComment(e, r);
+      routingComment(e, r, "Consumers cannot roll back with us");
+      e.has("comment", r.comments[0], "**Severity:** P2");
+      e.eq("block classification[0].level", r.block?.classification?.[0]?.level, "P2");
     },
   },
   {

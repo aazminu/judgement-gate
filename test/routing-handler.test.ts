@@ -279,3 +279,120 @@ routing:
     expect(routing[0].blobs?.slice(0, 6)).toEqual(["routing", "o/r", "", "shadow", "human", "one-way-door flagged"]);
   });
 });
+
+describe("comment for a passing PR routed to a human", () => {
+  const block = (md: string) => JSON.parse(/<!-- judgement-gate:v1 (\{.*\}) -->/.exec(md)![1]);
+  const commentWrites = (calls: Call[]) => calls.filter((c) => c.url.includes("/issues/7/comments") && c.method !== "GET");
+  const srcRule = 'routing:\n  human_when:\n    - files: ["src/**"]\n';
+
+  it("Type 1 with an ADR gets one comment: the line, the why, the reviewer questions, the block", async () => {
+    const net = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    const md = postedComment(net.calls)!;
+    expect(commentWrites(net.calls)).toHaveLength(1);
+    expect(md).toContain("passed the checks, routed to a human reviewer");
+    expect(md.split("\n").find((l) => l.startsWith("**Review routing:**"))).toContain("`needs-human-review`");
+    expect(md).toContain("The ADR records the reasoning");
+    expect(md).toContain("**Questions a reviewer will ask:**");
+    const b = block(md);
+    expect(b.failing).toEqual([]);
+    expect(b.routing.route).toBe("human");
+  });
+
+  it("is posted in shadow routing mode with the shadow wording", async () => {
+    const net = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv({ ROUTING_MODE: "shadow" }), net.fetchFn);
+    const md = postedComment(net.calls)!;
+    expect(md).toContain("human review recommended");
+    expect(md).toContain("shadow");
+    expect(labelCalls(net.calls)).toHaveLength(0);
+  });
+
+  it("a files rule alone also gets the comment", async () => {
+    const net = fakeNet({ config: { status: 200, body: srcRule }, answers: benign });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    const md = postedComment(net.calls)!;
+    expect(md).toContain("`files: src/**`");
+    expect(block(md).failing).toEqual([]);
+  });
+
+  it("an agent route posts no comment", async () => {
+    const net = fakeNet({ config: { status: 404 }, answers: benign });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    expect(commentWrites(net.calls)).toHaveLength(0);
+  });
+
+  it("an unavailable route posts no comment, and neither does a degraded audit", async () => {
+    const cfg = fakeNet({ config: { status: 500, body: "nope" }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv(), cfg.fetchFn);
+    expect(commentWrites(cfg.calls)).toHaveLength(0);
+    clearConfigCache();
+    const down = fakeNet({ config: { status: 200, body: srcRule }, jevStatus: 500 });
+    await processPullRequest(prEvent(), await makeEnv(), down.fetchFn);
+    expect(labelCalls(down.calls)).toHaveLength(1);
+    expect(commentWrites(down.calls)).toHaveLength(0);
+  });
+
+  it("a failing judgement still gets the remediation comment, not the routing one", async () => {
+    const net = fakeNet({ config: { status: 404 }, answers: type1 });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    const md = postedComment(net.calls)!;
+    expect(md).toContain("**Fix:**");
+    expect(md).not.toContain("passed the checks");
+  });
+
+  it("replaces an earlier failing comment in place: one PATCH, no second comment", async () => {
+    const old = fakeNet({ config: { status: 404 }, answers: type1 });
+    await processPullRequest(prEvent(), await makeEnv(), old.fetchFn);
+    const oldBody = postedComment(old.calls)!;
+    clearConfigCache();
+    const net = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    const fetchFn = (async (input: any, init: any = {}) => {
+      const url = String(input);
+      if (url.includes("/issues/7/comments") && (init.method ?? "GET") === "GET") return new Response(JSON.stringify([{ id: 42, body: oldBody }]), { status: 200 });
+      if (url.includes("/issues/comments/42")) {
+        net.calls.push({ method: init.method, url, body: JSON.parse(init.body) });
+        return new Response("{}", { status: 200 });
+      }
+      return net.fetchFn(input, init);
+    }) as typeof fetch;
+    await processPullRequest(prEvent(), await makeEnv(), fetchFn);
+    const patches = net.calls.filter((c) => c.method === "PATCH" && c.url.includes("/issues/comments/42"));
+    expect(patches).toHaveLength(1);
+    expect(patches[0].body.body).toContain("passed the checks");
+    expect(patches[0].body.body).not.toContain("**Fix:**");
+    expect(postedComment(net.calls)).toBeUndefined();
+  });
+
+  it("a comment failure leaves conclusion and title unchanged and only adds a note to the summary", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const ok = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv(), ok.fetchFn);
+    clearConfigCache();
+    const inner = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    const fetchFn = ((input: any, init: any = {}) =>
+      String(input).includes("/issues/7/comments") ? Promise.resolve(new Response("denied", { status: 403 })) : inner.fetchFn(input, init)) as typeof fetch;
+    await expect(processPullRequest(prEvent(), await makeEnv(), fetchFn)).resolves.toBeDefined();
+    const a = finalCheck(ok.calls);
+    const b = finalCheck(inner.calls);
+    expect(b.conclusion).toBe(a.conclusion);
+    expect(b.output.title).toBe(a.output.title);
+    expect(b.output.summary.startsWith(a.output.summary)).toBe(true);
+    expect(b.output.summary).toContain("Could not post the routing comment");
+    expect(a.output.summary).not.toContain("Could not post");
+    expect(labelCalls(inner.calls)).toHaveLength(1);
+  });
+
+  it("a thrown render error cannot degrade the audit or change the check", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const comment = await import("../src/comment");
+    vi.spyOn(comment, "renderRoutingComment").mockImplementation(() => {
+      throw new Error("render blew up");
+    });
+    const net = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(finalCheck(net.calls).output.title).toBe("Type 1 verified with ADR");
+    expect(finalCheck(net.calls).output.summary).toContain("Could not post the routing comment");
+  });
+});
