@@ -142,9 +142,9 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
       switch (v.reason) {
         case "type1_no_adr":
         case "ambiguous":
-          return probes.type1;
+          return [...probes.type1];
         case "type2_no_plan":
-          return probes.type2;
+          return [...probes.type2];
         default:
           return [];
       }

@@ -4,7 +4,7 @@
 #
 # Note: a non-empty list REPLACES the default. List `use: one-way-door` to keep it running.
 judgements:
-  # Built-in: is this a one-way door? Optional overrides: confidence_threshold, applies_to.
+  # Built-in: is this a one-way door? Optional overrides: confidence_threshold, applies_to, probes.
   - use: one-way-door
     confidence_threshold: 0.75
     # probes:                            # optional: replace the built-in questions shown to the author

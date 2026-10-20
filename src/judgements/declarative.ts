@@ -47,7 +47,7 @@ export function compileDeclarative(spec: DeclarativeSpec): Judgement {
       return { conclusion: "success", reason: `${spec.id}_ok`, summary: `${spec.name}: ok`, signals, metrics: { ...metrics, cleared: over } };
     },
     remedy: () => ({ why: spec.why, fix: spec.fix }),
-    probes: () => spec.probes ?? [],
+    probes: () => [...(spec.probes ?? [])],
     agent: () => ({
       threshold: spec.threshold,
       satisfied_by: spec.satisfiedBy.map((r) =>

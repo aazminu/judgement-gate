@@ -83,6 +83,24 @@ describe("agent block", () => {
   });
 });
 
+describe("line separators", () => {
+  it("U+2028 and U+2029 are escaped so the documented agent regex still matches", () => {
+    const ls = String.fromCharCode(0x2028);
+    const ps = String.fromCharCode(0x2029);
+    const j = compileDeclarative({
+      id: "x", name: `n${ls}m`, question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
+      satisfiedBy: [{ pr_body_matches: /ok/ }], why: "w", fix: "f", probes: [`Why${ps}not?`],
+    });
+    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s" }), rc);
+    const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
+    expect(block).not.toContain(ls);
+    expect(block).not.toContain(ps);
+    const { data } = parseBlock(md);
+    expect(data.failing[0].name).toBe(`n${ls}m`);
+    expect(data.failing[0].probes).toEqual([`Why${ps}not?`]);
+  });
+});
+
 describe("probes", () => {
   const declarative = (id: string, name: string, probes?: string[]) =>
     compileDeclarative({

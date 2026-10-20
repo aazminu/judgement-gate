@@ -6,7 +6,7 @@ Every remediation comment ends with a hidden block that tells an agent exactly h
 <!-- judgement-gate:v1 {"schema":1,"mode":"enforce","failing":[ ... ]} -->
 ```
 
-One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgement-gate:v(\d+) (\{.*\}) -->/` on the comment that contains `<!-- judgement-gate -->`, then `JSON.parse` group 2. `<` and `>` inside the JSON are escaped as `<`/`>`, so JSON parsing round-trips and nothing can close the comment early. The block carries ids, reason codes, numbers, templates and authored probe questions only: never PR text, diffs or secrets.
+One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgement-gate:v(\d+) (\{.*\}) -->/` on the comment that contains `<!-- judgement-gate -->`, then `JSON.parse` group 2. `<` and `>` inside the JSON are escaped as `\u003c`/`\u003e`, so JSON parsing round-trips and nothing can close the comment early. U+2028 and U+2029 are escaped too (`\u2028`/`\u2029`), so the block stays on one line for the regex above. The block carries ids, reason codes, numbers, templates and authored probe questions only: never PR text, diffs or secrets.
 
 | Field | Meaning |
 |---|---|

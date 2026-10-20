@@ -160,6 +160,9 @@ describe("parseConfig: invalid throws ConfigError", () => {
     ["use with probes as a list", useProbes("probes: [x]")],
     ["use with unknown probes key", useProbes(`probes:\n      ambiguous: [x]`)],
     ["use with empty probes list", useProbes(`probes:\n      type1: []`)],
+    ["use with empty probes mapping", useProbes("probes: {}")],
+    ["use with null type1", useProbes(`probes:\n      type1: null`)],
+    ["declarative with null probes", decl({ probes: null })],
   ];
   it.each(cases)("%s", (_name, text) => {
     expect(() => parseConfig(text, defaults)).toThrow(ConfigError);
@@ -171,6 +174,21 @@ describe("parseConfig: invalid throws ConfigError", () => {
 
   it("names the offending judgement and key for bad probes", () => {
     expect(() => parseConfig(decl({ probes: "nope" }), defaults)).toThrow(/x.*probes/);
+  });
+
+  it.each([
+    ["an HTML comment opener", "see <!-- here"],
+    ["an HTML comment closer", "ends --> here"],
+    ["a newline", "line one\nline two"],
+    ["a carriage return", "line one\rline two"],
+  ])("rejects a probe containing %s", (_name, probe) => {
+    expect(() => parseConfig(decl({ probes: [probe] }), defaults)).toThrow(/probes/);
+    expect(() => parseConfig(JSON.stringify({ judgements: [{ use: "one-way-door", probes: { type1: [probe] } }] }), defaults)).toThrow(/probes/);
+  });
+
+  it("hints differ: built-in labels keep the defaults when omitted, declarative asks none", () => {
+    expect(() => parseConfig(useProbes(`probes:\n      type1: []`), defaults)).toThrow(/omit it to keep the built-in questions/);
+    expect(() => parseConfig(decl({ probes: [] }), defaults)).toThrow(/omit it to ask none/);
   });
 });
 
@@ -188,6 +206,23 @@ describe("probes", () => {
     expect(j.probes!(verdict("type1_no_adr"))).toEqual(["Custom type 1?"]);
     expect(j.probes!(verdict("ambiguous"))).toEqual(["Custom type 1?"]);
     expect(j.probes!(verdict("type2_no_plan"))).toEqual(DEFAULT_PROBES.type2);
+  });
+  it("use: one-way-door type2 override keeps the default type1", () => {
+    const [j] = parseConfig(useProbes(`probes:\n      type2: ["Custom type 2?"]`), defaults);
+    expect(j.probes!(verdict("type2_no_plan"))).toEqual(["Custom type 2?"]);
+    expect(j.probes!(verdict("type1_no_adr"))).toEqual(DEFAULT_PROBES.type1);
+  });
+  it("returned arrays are copies: mutating one does not change the next call", () => {
+    const [d] = parseConfig(decl({ probes: ["Q one?"] }), defaults);
+    d.probes!(verdict("x_unsatisfied")).push("injected");
+    expect(d.probes!(verdict("x_unsatisfied"))).toEqual(["Q one?"]);
+    const [o] = parseConfig(useProbes(`probes:\n      type1: ["T1?"]`), defaults);
+    o.probes!(verdict("type1_no_adr")).push("injected");
+    expect(o.probes!(verdict("type1_no_adr"))).toEqual(["T1?"]);
+    const w = parseConfig(useProbes("probes:\n      type2: [\"T2?\"]"), defaults)[0];
+    w.probes!(verdict("type1_no_adr")).push("injected");
+    expect(DEFAULT_PROBES.type1).not.toContain("injected");
+    expect(w.probes!(verdict("type1_no_adr"))).toEqual(DEFAULT_PROBES.type1);
   });
 });
 

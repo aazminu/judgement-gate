@@ -6,7 +6,12 @@ import type { RemedyContext } from "./types";
 export const AGENT_BLOCK_VERSION = 1;
 
 /** Escape so the JSON can never close the HTML comment or inject markup. */
-const safeJson = (o: unknown) => JSON.stringify(o).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+const safeJson = (o: unknown) =>
+  JSON.stringify(o)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 
 /** Hidden, machine-readable twin of the comment. Ids, reasons, numbers, fix templates and authored probes only: no PR or diff content. */
 function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string): string {

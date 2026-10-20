@@ -32,12 +32,15 @@ function globs(v: unknown, where: string): string[] | undefined {
 function probeList(v: unknown, where: string, label: string): string[] | undefined {
   if (v === undefined) return undefined;
   if (!Array.isArray(v) || v.length === 0 || v.length > MAX_PROBES) {
-    throw new ConfigError(`${where}: "${label}" must be a list of 1 to ${MAX_PROBES} questions (omit it to ask none)`);
+    const omit = label.startsWith("probes.") ? "keep the built-in questions" : "ask none";
+    throw new ConfigError(`${where}: "${label}" must be a list of 1 to ${MAX_PROBES} questions (omit it to ${omit})`);
   }
   return v.map((p) => {
     if (typeof p !== "string" || p.trim() === "") throw new ConfigError(`${where}: each "${label}" entry must be a non-empty string`);
     const t = p.trim();
     if (t.length > MAX_PROBE_LENGTH) throw new ConfigError(`${where}: each "${label}" entry must be at most ${MAX_PROBE_LENGTH} characters`);
+    if (t.includes("<!--") || t.includes("-->")) throw new ConfigError(`${where}: each "${label}" entry must not contain an HTML comment marker`);
+    if (/[\r\n]/.test(t)) throw new ConfigError(`${where}: each "${label}" entry must be a single line`);
     return t;
   });
 }
