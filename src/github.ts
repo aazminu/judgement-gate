@@ -108,6 +108,11 @@ export class GitHubClient {
     return all;
   }
 
+  /** Add labels to a PR. GitHub treats an already-present label as a no-op. The gate never removes labels. */
+  async addLabels(owner: string, repo: string, pr: number, labels: string[]): Promise<void> {
+    await this.req("POST", `/repos/${owner}/${repo}/issues/${pr}/labels`, { labels });
+  }
+
   /** Upsert the single bot comment, found by its hidden marker. */
   async upsertComment(owner: string, repo: string, pr: number, body: string): Promise<"created" | "updated"> {
     const comments = await this.req<{ id: number; body: string }[]>("GET", `/repos/${owner}/${repo}/issues/${pr}/comments?per_page=100`);

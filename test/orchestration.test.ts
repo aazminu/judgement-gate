@@ -10,7 +10,8 @@ const stub = (id: string, name = id): Judgement => ({
   id,
   name,
   questions: { q: { type: "noul", instructions: `ask ${id}`, criteria: { true: "y", false: "n" } } },
-  decide: () => ({ conclusion: "success", reason: `${id}_ok`, summary: `${name} ok` }),
+  decide: () => ({ conclusion: "success", reason: `${id}_ok`, summary: `${name} ok`, fired: false }),
+  reasons: [],
   remedy: () => ({ why: `why ${id}`, fix: `fix ${id}` }),
 });
 
@@ -39,7 +40,7 @@ describe("jev request", () => {
 
 const fail = (j: Judgement): { judgement: Judgement; verdict: JudgementVerdict } => ({
   judgement: j,
-  verdict: { conclusion: "failure", reason: `${j.id}_bad`, summary: `${j.name} bad`, signals: "sig" },
+  verdict: { conclusion: "failure", reason: `${j.id}_bad`, summary: `${j.name} bad`, fired: true, signals: "sig" },
 });
 const pass = (j: Judgement) => ({ judgement: j, verdict: j.decide({}, pr) });
 const rc = { owner: "o", repo: "r", headRef: "abc" };

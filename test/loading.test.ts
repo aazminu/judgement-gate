@@ -94,6 +94,7 @@ function fakeNet(o: NetOpts) {
     if (url.includes("/pulls/7/files")) return json(o.files ?? [{ filename: "src/a.ts", status: "modified", patch: "+x" }]);
     if (url.includes("/issues/7/comments") && method === "GET") return json([]);
     if (url.includes("/issues/7/comments") && method === "POST") return json({ id: 1 }, 201);
+    if (url.endsWith("/issues/7/labels") && method === "POST") return json([]);
     return json({ error: "unexpected " + url }, 500);
   }) as typeof fetch;
   return { calls, fetchFn };

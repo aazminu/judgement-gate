@@ -63,6 +63,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
     name: "One-way door",
     appliesTo: opts.appliesTo,
     unprefixedKeys: true,
+    reasons: ["type1_adr", "type1_no_adr", "ambiguous", "type2_ok", "type2_no_plan"],
     questions: {
       is_one_way_boundary_mutation: {
         type: "noul",
@@ -106,6 +107,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
         conclusion: v.conclusion === "success" ? "success" : "failure",
         reason: v.reason,
         summary: v.summary,
+        fired: v.reason.startsWith("type1"),
         metrics: { probability: j.oneWayProb, confidence: j.classificationConfidence, cleared: v.reason === "type1_adr" },
         signals: `Signals: one-way boundary ${pct(j.oneWayProb)}, additive/isolated ${pct(j.additiveProb)}, reversal plan ${pct(j.reversalProb)}, classified ${j.classification} (confidence ${j.classificationConfidence.toFixed(2)}).`,
       };

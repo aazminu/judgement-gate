@@ -27,3 +27,16 @@ judgements:
     probes:                              # optional: up to 7 short questions a reviewer will ask
       - "Which consumers call the changed endpoint or field, and how do you know?"
       - "What do they see during the rollout window, with old and new versions side by side?"
+
+# Optional. Who should review: a person or an agent. The gate only recommends: it adds a PR label and
+# never changes the check result. Enforce it with CODEOWNERS or a workflow (docs/configuration.md).
+# Without this block the defaults below still apply. The `routing:` block is read from the default
+# branch like the rest of this file.
+routing:
+  label: needs-human-review     # added to the PR (never removed) when a human should review. Max 50 chars.
+  include_defaults: true        # keep the built-in rules: one-way-door fired, one-way-door reason ambiguous
+  human_when:                   # any matching entry routes to a human
+    - judgement: public-api-contract   # that judgement fired, even if the author cleared it
+    - judgement: one-way-door
+      reason: ambiguous                # that judgement returned this reason code (already a default)
+    - files: ["migrations/**", "infra/**"]   # any changed file matches, even a deleted one

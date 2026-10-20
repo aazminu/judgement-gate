@@ -33,6 +33,7 @@ export function compileDeclarative(spec: DeclarativeSpec): Judgement {
     id: spec.id,
     name: spec.name,
     appliesTo: spec.appliesTo,
+    reasons: [`${spec.id}_unsatisfied`, `${spec.id}_ok`],
     questions: {
       q: { type: "noul", instructions: spec.question, criteria: { true: spec.whenTrue, false: spec.whenFalse } },
     },
@@ -42,9 +43,9 @@ export function compileDeclarative(spec: DeclarativeSpec): Judgement {
       const over = p >= spec.threshold;
       const metrics = { probability: p, confidence: answers.q.confidence };
       if (over && !satisfied(spec.satisfiedBy, pr)) {
-        return { conclusion: "failure", reason: `${spec.id}_unsatisfied`, summary: `${spec.name}: not satisfied`, signals, metrics: { ...metrics, cleared: false } };
+        return { conclusion: "failure", reason: `${spec.id}_unsatisfied`, summary: `${spec.name}: not satisfied`, fired: over, signals, metrics: { ...metrics, cleared: false } };
       }
-      return { conclusion: "success", reason: `${spec.id}_ok`, summary: `${spec.name}: ok`, signals, metrics: { ...metrics, cleared: over } };
+      return { conclusion: "success", reason: `${spec.id}_ok`, summary: `${spec.name}: ok`, fired: over, signals, metrics: { ...metrics, cleared: over } };
     },
     remedy: () => ({ why: spec.why, fix: spec.fix }),
     probes: () => [...(spec.probes ?? [])],

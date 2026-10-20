@@ -5,6 +5,9 @@ compatibility_date = "2025-01-01"
 [vars]
 # shadow = check always passes (informational); enforce = real success/failure
 MODE = "shadow"
+# Review routing (needs-human-review label) has its own mode and defaults to MODE when unset. Set it to pilot
+# routing in shadow while the check enforces, or the reverse. Only enforce adds the label.
+# ROUTING_MODE = "shadow"
 JEV_MODEL = "typesafe/jev-1.14"
 JEV_API_URL = "https://openrouter.ai/api/alpha/decisions"
 JEV_TIMEOUT_MS = "2500"

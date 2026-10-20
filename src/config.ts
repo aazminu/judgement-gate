@@ -3,6 +3,7 @@ import { compileDeclarative, type DeclarativeSpec, type SatisfiedBy } from "./ju
 import type { OneWayDoorProbes } from "./judgements/one-way-door";
 import { BUILTIN_IDS, builtinById, type BuiltinDefaults } from "./judgements/registry";
 import type { GitHubClient } from "./github";
+import { DEFAULT_LABEL, DEFAULT_RULES, type RoutingRule, type RoutingSetup } from "./routing";
 import type { Env, Judgement } from "./types";
 
 export class ConfigError extends Error {}
@@ -102,11 +103,78 @@ function declarative(o: Obj, where: string): DeclarativeSpec {
   };
 }
 
+const ROUTING_KEYS = ["include_defaults", "label", "human_when"];
+const MAX_LABEL = 50;
+
+function routingRule(entry: unknown, i: number, judgements: Judgement[]): RoutingRule {
+  const where = `routing.human_when[${i}]`;
+  const keys = isObj(entry) ? Object.keys(entry) : [];
+  const isFiles = keys.length === 1 && keys[0] === "files";
+  const isJudgement = keys.includes("judgement") && keys.every((k) => k === "judgement" || k === "reason");
+  if (!isObj(entry) || !(isFiles || isJudgement)) {
+    throw new ConfigError(`${where}: each entry must be exactly one of {judgement}, {judgement, reason} or {files}`);
+  }
+  if (isFiles) {
+    const g = entry.files;
+    if (!Array.isArray(g) || g.length === 0 || g.some((x) => typeof x !== "string" || x === "")) {
+      throw new ConfigError(`${where}: "files" must be a non-empty list of glob strings`);
+    }
+    return { files: g as string[] };
+  }
+  const id = entry.judgement;
+  const judgement = judgements.find((j) => j.id === id);
+  if (typeof id !== "string" || !judgement) {
+    throw new ConfigError(`${where}: unknown judgement ${JSON.stringify(id)} (known: ${judgements.map((j) => j.id).join(", ")})`);
+  }
+  if (!("reason" in entry)) return { judgement: id };
+  const reason = entry.reason;
+  if (typeof reason !== "string" || !judgement.reasons.includes(reason)) {
+    throw new ConfigError(`${where}: unknown reason ${JSON.stringify(reason)} for "${id}" (known: ${judgement.reasons.join(", ")})`);
+  }
+  return { judgement: id, reason };
+}
+
+/** The owner's label from a raw `routing:` block if it is usable, else the default; used when the block is otherwise invalid. */
+function labelOrDefault(raw: unknown): string {
+  if (!isObj(raw) || typeof raw.label !== "string") return DEFAULT_LABEL;
+  const label = raw.label.trim();
+  return label !== "" && label.length <= MAX_LABEL ? label : DEFAULT_LABEL;
+}
+
 /**
- * Parse the org's judgement YAML. Empty, missing or empty-list config yields the default built-in list.
- * Anything malformed throws ConfigError so the caller can fall back and say so.
+ * Validate the `routing:` block against the judgements actually in force. Absent or empty means the defaults.
+ * Anything malformed throws ConfigError.
  */
-export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[] {
+export function parseRouting(raw: unknown, judgements: Judgement[]): { rules: RoutingRule[]; label: string } {
+  if (raw === undefined || raw === null) return { rules: [...DEFAULT_RULES], label: DEFAULT_LABEL };
+  if (!isObj(raw)) throw new ConfigError('"routing" must be a mapping');
+  const unknown = Object.keys(raw).filter((k) => !ROUTING_KEYS.includes(k));
+  if (unknown.length > 0) {
+    throw new ConfigError(`routing: unknown key ${unknown.map((k) => `"${k}"`).join(", ")} (expected ${ROUTING_KEYS.join(", ")})`);
+  }
+
+  const includeDefaults = raw.include_defaults ?? true;
+  if (typeof includeDefaults !== "boolean") throw new ConfigError('routing: "include_defaults" must be a boolean');
+
+  let label = DEFAULT_LABEL;
+  if (raw.label !== undefined) {
+    if (typeof raw.label !== "string" || raw.label.trim() === "") throw new ConfigError('routing: "label" must be a non-empty string');
+    label = raw.label.trim();
+    if (label.length > MAX_LABEL) throw new ConfigError(`routing: "label" must be at most ${MAX_LABEL} characters`);
+  }
+
+  const humanWhen = raw.human_when ?? [];
+  if (!Array.isArray(humanWhen)) throw new ConfigError('routing: "human_when" must be a list');
+  const own = humanWhen.map((entry, i) => routingRule(entry, i, judgements));
+  return { rules: [...(includeDefaults ? DEFAULT_RULES : []), ...own], label };
+}
+
+/**
+ * Parse the org's config YAML into judgements and routing. Empty, missing or empty-list judgements yield the
+ * default built-in list. A malformed judgements section throws ConfigError so the caller can fall back and say so;
+ * a malformed routing block never throws, it comes back as a `config_error` setup next to the valid judgements.
+ */
+export function parseGateConfig(text: string, defaults: BuiltinDefaults): { judgements: Judgement[]; routing: RoutingSetup } {
   let doc: unknown;
   try {
     doc = YAML.parse(text);
@@ -114,13 +182,23 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
     throw new ConfigError(`YAML syntax error: ${(e as Error).message.split("\n")[0]}`);
   }
   const fallback = () => [builtinById("one-way-door", {}, defaults)!];
-  if (doc === null || doc === undefined) return fallback();
+  const withRouting = (judgements: Judgement[], rawRouting: unknown): { judgements: Judgement[]; routing: RoutingSetup } => {
+    try {
+      return { judgements, routing: { status: "ok", ...parseRouting(rawRouting, judgements) } };
+    } catch (e) {
+      if (!(e instanceof ConfigError)) throw e;
+      return { judgements, routing: { status: "config_error", message: e.message, label: labelOrDefault(rawRouting) } };
+    }
+  };
+  if (doc === null || doc === undefined) return withRouting(fallback(), undefined);
   if (!isObj(doc)) throw new ConfigError("config root must be a mapping");
-  const unknownRoot = Object.keys(doc).filter((k) => k !== "judgements");
-  if (unknownRoot.length > 0) throw new ConfigError(`unknown top-level key ${unknownRoot.map((k) => `"${k}"`).join(", ")} (expected "judgements")`);
-  if (doc.judgements === undefined || doc.judgements === null) return fallback();
+  const unknownRoot = Object.keys(doc).filter((k) => k !== "judgements" && k !== "routing");
+  if (unknownRoot.length > 0) {
+    throw new ConfigError(`unknown top-level key ${unknownRoot.map((k) => `"${k}"`).join(", ")} (expected "judgements" or "routing")`);
+  }
+  if (doc.judgements === undefined || doc.judgements === null) return withRouting(fallback(), doc.routing);
   if (!Array.isArray(doc.judgements)) throw new ConfigError('"judgements" must be a list');
-  if (doc.judgements.length === 0) return fallback();
+  if (doc.judgements.length === 0) return withRouting(fallback(), doc.routing);
 
   const seen = new Set<string>();
   const out: Judgement[] = [];
@@ -152,7 +230,12 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
     seen.add(j.id);
     out.push(j);
   });
-  return out;
+  return withRouting(out, doc.routing);
+}
+
+/** Parse the org's judgement YAML; see parseGateConfig. A `routing` block is accepted but not returned here. */
+export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[] {
+  return parseGateConfig(text, defaults).judgements;
 }
 
 export const CONFIG_PATH = ".github/judgement-gate.yml";
@@ -204,15 +287,17 @@ async function readConfigText(gh: GitHubClient, owner: string, repo: string, now
 }
 
 /**
- * Load the org's judgements from the default branch of <owner>/<CONFIG_REPO>. Never throws: a missing
- * file means the default built-ins, and an unreadable or invalid file means the same plus a note.
+ * Load the org's judgements and routing from the default branch of <owner>/<CONFIG_REPO>. Never throws: a missing
+ * file means the default built-ins and default routing; an unreadable or invalid file means the built-ins plus a
+ * note, with routing `unavailable` (unreadable) or `config_error` (invalid). A routing-only error keeps the
+ * owner's judgements and adds no note.
  */
-export async function loadJudgements(
+export async function loadGateConfig(
   gh: GitHubClient,
   owner: string,
   env: Env,
   now = Date.now(),
-): Promise<{ judgements: Judgement[]; note?: string }> {
+): Promise<{ judgements: Judgement[]; routing: RoutingSetup; note?: string }> {
   const defaults = { confidenceThreshold: Number(env.CONFIDENCE_THRESHOLD ?? 0.75) };
   const repo = env.CONFIG_REPO ?? ".github";
   const fallback = () => parseConfig("", defaults);
@@ -220,14 +305,30 @@ export async function loadJudgements(
   try {
     text = await readConfigText(gh, owner, repo, now);
   } catch (e) {
-    return { judgements: fallback(), note: `Could not read judgement config (${(e as Error).message}); fell back to built-in judgements.` };
+    return {
+      judgements: fallback(),
+      routing: { status: "unavailable", message: "config could not be read", label: DEFAULT_LABEL },
+      note: `Could not read judgement config (${(e as Error).message}); fell back to built-in judgements.`,
+    };
   }
-  if (text === null) return { judgements: fallback() };
+  if (text === null) return parseGateConfig("", defaults);
   try {
-    return { judgements: parseConfig(text, defaults) };
+    return parseGateConfig(text, defaults);
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
-    return { judgements: fallback(), note: `Config error: ${e.message}; fell back to built-in judgements.` };
+    // A bad judgements section or root key leaves the YAML readable, so keep the owner's routing label if it has one.
+    let rawRouting: unknown;
+    try {
+      const doc = YAML.parse(text);
+      rawRouting = isObj(doc) ? doc.routing : undefined;
+    } catch {
+      // unparseable YAML: nothing can be read, so the default label stays
+    }
+    return {
+      judgements: fallback(),
+      routing: { status: "config_error", message: e.message, label: labelOrDefault(rawRouting) },
+      note: `Config error: ${e.message}; fell back to built-in judgements.`,
+    };
   }
 }
 

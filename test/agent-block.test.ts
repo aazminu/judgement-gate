@@ -19,7 +19,7 @@ const failing = (judgement: Judgement, verdict: JudgementVerdict) => [{ judgemen
 describe("agent block", () => {
   it("one-way-door Type 1: ADR glob, still has marker, hint and human text", () => {
     const md = renderComment(
-      failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", metrics: { probability: 0.9 } }),
+      failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true, metrics: { probability: 0.9 } }),
       rc,
       "enforce",
     );
@@ -38,7 +38,7 @@ describe("agent block", () => {
   });
 
   it("one-way-door Type 2: required PR body fields and a pasteable template", () => {
-    const { data } = parseBlock(renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type2_no_plan", summary: "s" }), rc));
+    const { data } = parseBlock(renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type2_no_plan", summary: "s", fired: false }), rc));
     expect(data.mode).toBe("shadow");
     const f = data.failing[0];
     expect(f.satisfied_by[0]).toMatchObject({ type: "pr_body_fields", fields: ["Reversal Trigger", "Rollback Path"] });
@@ -71,12 +71,30 @@ describe("agent block", () => {
     expect(f.suggested_template).toBeNull();
   });
 
+  it("reports routing in the block when given, leaving schema at 1", () => {
+    const routing = { route: "human" as const, reasons: ["one-way-door flagged"], label: "needs-human-review" };
+    const { version, data } = parseBlock(
+      renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true }), rc, "enforce", routing),
+    );
+    expect(version).toBe(1);
+    expect(data.schema).toBe(1);
+    expect(data.routing).toEqual(routing);
+  });
+
+  it("omits the routing key entirely when no routing is given", () => {
+    const { data } = parseBlock(
+      renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true }), rc, "enforce"),
+    );
+    expect(data.schema).toBe(1);
+    expect("routing" in data).toBe(false);
+  });
+
   it("cannot be broken out of by hostile text", () => {
     const j = compileDeclarative({
       id: "x", name: "a --> <script>", question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
       satisfiedBy: [{ pr_body_matches: /-->/ }], why: "w", fix: "f",
     });
-    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s" }), rc);
+    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s", fired: true }), rc);
     const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
     expect(block.indexOf("-->")).toBe(block.length - 3);
     expect(parseBlock(md).data.failing[0].name).toBe("a --> <script>");
@@ -91,7 +109,7 @@ describe("line separators", () => {
       id: "x", name: `n${ls}m`, question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
       satisfiedBy: [{ pr_body_matches: /ok/ }], why: "w", fix: "f", probes: [`Why${ps}not?`],
     });
-    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s" }), rc);
+    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s", fired: true }), rc);
     const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
     expect(block).not.toContain(ls);
     expect(block).not.toContain(ps);
@@ -107,7 +125,7 @@ describe("probes", () => {
       id, name, question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
       satisfiedBy: [{ pr_body_matches: /^Plan:/m }], why: "w", fix: "f", probes,
     });
-  const fail = (reason: string): JudgementVerdict => ({ conclusion: "failure", reason, summary: "s", signals: "Signals: x." });
+  const fail = (reason: string): JudgementVerdict => ({ conclusion: "failure", reason, summary: "s", fired: true, signals: "Signals: x." });
 
   it("one-way-door Type 1: questions sit between the Fix and the signals, and ride in the block", () => {
     const md = renderComment(failing(oneWayDoor(), fail("type1_no_adr")), rc);
