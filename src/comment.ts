@@ -44,6 +44,24 @@ function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string,
   return `<!-- judgement-gate:v${AGENT_BLOCK_VERSION} ${safeJson(payload)} -->`;
 }
 
+/** Reasons come from config ids, globs and reason codes; code spans keep `**` in a glob from becoming markdown. */
+const code = (s: string) => `\`${s.replace(/`/g, "'")}\``;
+
+/** The routing recommendation in words, so the person reading the comment sees what the hidden block and the label say. */
+function routingLine(routing: RoutingResult, routingMode: string): string {
+  const why = routing.reasons.map(code).join(", ");
+  switch (routing.route) {
+    case "human":
+      return routingMode === "shadow"
+        ? `**Review routing:** human review recommended: ${why}. Routing is in shadow mode, so no label is added.`
+        : `**Review routing:** human review recommended: ${why}. The gate adds the ${code(routing.label)} label.`;
+    case "agent":
+      return "**Review routing:** agent review is fine: no rule requires a human.";
+    default:
+      return `**Review routing:** could not be decided: ${why}.`;
+  }
+}
+
 /**
  * One comment for the PR: a teaching section (why + fix) per failing judgement. `all` is every result; classifiers
  * (severity) among them are reported alongside, never as a reason to post.
@@ -54,12 +72,14 @@ export function renderComment(
   mode = "shadow",
   routing?: RoutingResult,
   all: JudgementResult[] = [],
+  routingMode = mode,
 ): string {
   const classified = all.filter((r) => r.verdict.classification);
   const labels = classified.map(({ judgement, verdict }) => {
     const { level, confidence } = verdict.classification!;
     return `**${judgement.name}:** ${level}${confidence === undefined ? "" : ` (confidence ${confidence.toFixed(2)})`}`;
   });
+  const header = [...labels, ...(routing ? [routingLine(routing, routingMode)] : [])];
   const heading =
     failing.length === 1 ? failing[0].verdict.summary : `${failing.length} judgements need attention`;
   const sections = failing.map(({ judgement, verdict }) => {
@@ -71,5 +91,5 @@ export function renderComment(
     parts.push("", `<sub>Not a real issue? Reply \`${FALSE_POSITIVE_COMMAND} ${judgement.id}\` to help calibrate.</sub>`);
     return parts.join("\n");
   });
-  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${labels.length > 0 ? `${labels.join("  \n")}\n\n` : ""}${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode, routing, classified)}`;
+  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${header.length > 0 ? `${header.join("  \n")}\n\n` : ""}${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode, routing, classified)}`;
 }

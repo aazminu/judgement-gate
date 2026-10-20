@@ -93,6 +93,8 @@ routing:
 | `label` | The PR label added for a `human` result. Non-empty, at most 50 characters. Default `needs-human-review`. |
 | `human_when` | A list. Entries are OR'd: any match routes to a human. Each entry has exactly one of the forms below. |
 
+Where the result shows: the check summary always has a `Review routing:` line. A remediation comment (posted only when a judgement fails) also has a `**Review routing:**` line under the heading, naming the rules that matched in code spans; in shadow routing mode it says no label is added. The hidden agent block carries the same result as `routing`. A PR that passes every judgement but routes to a human gets the label (enforce mode) and the summary line, but no comment.
+
 `human_when` entry forms:
 
 - `judgement: <id>`: that judgement ran and **fired**. Fired means it flagged the change, whether or not the author cleared it, so a Type 1 change with an ADR still counts.

@@ -183,7 +183,7 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
     if (failing.length > 0) {
       try {
-        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing, results));
+        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing, results, routingMode));
       } catch (e) {
         console.error("judgement-gate comment failed", e);
         commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
