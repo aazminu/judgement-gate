@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError, parseConfig } from "../src/config";
 import exampleYaml from "../examples/judgement-gate.yml?raw";
-import type { JevAnswers, PrContext } from "../src/types";
+import { DEFAULT_PROBES } from "../src/judgements/one-way-door";
+import type { JevAnswers, JudgementVerdict, PrContext } from "../src/types";
 
 const defaults = { confidenceThreshold: 0.75 };
+const verdict = (reason: string): JudgementVerdict => ({ conclusion: "failure", reason, summary: "s" });
 
 const SPEC_EXAMPLE = `
 judgements:
@@ -111,6 +113,8 @@ describe("declarative decide", () => {
   });
 });
 
+const useProbes = (probes: string) => `judgements:\n  - use: one-way-door\n    ${probes}`;
+
 const decl = (extra: Record<string, unknown> = {}, drop: string[] = []) => {
   const base: Record<string, unknown> = {
     id: "x",
@@ -146,6 +150,16 @@ describe("parseConfig: invalid throws ConfigError", () => {
     ["missing why", decl({}, ["why"])],
     ["non-string fix", decl({ fix: 5 })],
     ["id collides with built-in", decl({ id: "one-way-door" })],
+    ["probes as a bare string", decl({ probes: "nope" })],
+    ["empty probes", decl({ probes: [] })],
+    ["too many probes", decl({ probes: Array.from({ length: 8 }, (_, i) => `Q${i}?`) })],
+    ["empty probe", decl({ probes: ["ok?", ""] })],
+    ["blank probe", decl({ probes: ["ok?", "   "] })],
+    ["overlong probe", decl({ probes: ["a".repeat(301)] })],
+    ["non-string probe", decl({ probes: [5] })],
+    ["use with probes as a list", useProbes("probes: [x]")],
+    ["use with unknown probes key", useProbes(`probes:\n      ambiguous: [x]`)],
+    ["use with empty probes list", useProbes(`probes:\n      type1: []`)],
   ];
   it.each(cases)("%s", (_name, text) => {
     expect(() => parseConfig(text, defaults)).toThrow(ConfigError);
@@ -154,12 +168,37 @@ describe("parseConfig: invalid throws ConfigError", () => {
   it("names the offending judgement in the message", () => {
     expect(() => parseConfig(decl({ threshold: 2 }), defaults)).toThrow(/x.*threshold/);
   });
+
+  it("names the offending judgement and key for bad probes", () => {
+    expect(() => parseConfig(decl({ probes: "nope" }), defaults)).toThrow(/x.*probes/);
+  });
+});
+
+describe("probes", () => {
+  it("declarative probes are returned verbatim, trimmed", () => {
+    const [j] = parseConfig(decl({ probes: ["Who else calls this?", "  How would we know?  "] }), defaults);
+    expect(j.probes!(verdict("x_unsatisfied"))).toEqual(["Who else calls this?", "How would we know?"]);
+  });
+  it("declarative without probes gives an empty list", () => {
+    const [j] = parseConfig(decl(), defaults);
+    expect(j.probes!(verdict("x_unsatisfied"))).toEqual([]);
+  });
+  it("use: one-way-door overrides one list and keeps the default for the other", () => {
+    const [j] = parseConfig(useProbes(`probes:\n      type1: ["Custom type 1?"]`), defaults);
+    expect(j.probes!(verdict("type1_no_adr"))).toEqual(["Custom type 1?"]);
+    expect(j.probes!(verdict("ambiguous"))).toEqual(["Custom type 1?"]);
+    expect(j.probes!(verdict("type2_no_plan"))).toEqual(DEFAULT_PROBES.type2);
+  });
 });
 
 describe("shipped example", () => {
   it("examples/judgement-gate.yml parses", () => {
     const list = parseConfig(exampleYaml, defaults);
     expect(list.map((j) => j.id)).toEqual(["one-way-door", "public-api-contract"]);
+  });
+  it("public-api-contract ships with probes", () => {
+    const api = parseConfig(exampleYaml, defaults).find((j) => j.id === "public-api-contract")!;
+    expect(api.probes!(verdict("public-api-contract_unsatisfied")).length).toBeGreaterThanOrEqual(2);
   });
 });
 

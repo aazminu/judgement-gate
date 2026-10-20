@@ -1,5 +1,6 @@
 import YAML from "yaml";
 import { compileDeclarative, type DeclarativeSpec, type SatisfiedBy } from "./judgements/declarative";
+import type { OneWayDoorProbes } from "./judgements/one-way-door";
 import { BUILTIN_IDS, builtinById, type BuiltinDefaults } from "./judgements/registry";
 import type { GitHubClient } from "./github";
 import type { Env, Judgement } from "./types";
@@ -7,7 +8,9 @@ import type { Env, Judgement } from "./types";
 export class ConfigError extends Error {}
 
 const MAX_REGEX = 200;
-const USE_KEYS = new Set(["use", "confidence_threshold", "applies_to"]);
+const MAX_PROBES = 7;
+const MAX_PROBE_LENGTH = 300;
+const USE_KEYS = new Set(["use", "confidence_threshold", "applies_to", "probes"]);
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -24,6 +27,27 @@ function globs(v: unknown, where: string): string[] | undefined {
     throw new ConfigError(`${where}: "applies_to" must be a non-empty list of glob strings (omit it to always apply)`);
   }
   return v as string[];
+}
+
+function probeList(v: unknown, where: string, label: string): string[] | undefined {
+  if (v === undefined) return undefined;
+  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_PROBES) {
+    throw new ConfigError(`${where}: "${label}" must be a list of 1 to ${MAX_PROBES} questions (omit it to ask none)`);
+  }
+  return v.map((p) => {
+    if (typeof p !== "string" || p.trim() === "") throw new ConfigError(`${where}: each "${label}" entry must be a non-empty string`);
+    const t = p.trim();
+    if (t.length > MAX_PROBE_LENGTH) throw new ConfigError(`${where}: each "${label}" entry must be at most ${MAX_PROBE_LENGTH} characters`);
+    return t;
+  });
+}
+
+function builtinProbes(v: unknown, where: string): OneWayDoorProbes | undefined {
+  if (v === undefined) return undefined;
+  if (!isObj(v) || Object.keys(v).length === 0) throw new ConfigError(`${where}: "probes" must be a mapping with "type1" and/or "type2"`);
+  const bad = Object.keys(v).filter((k) => k !== "type1" && k !== "type2");
+  if (bad.length > 0) throw new ConfigError(`${where}: "probes" has unknown key ${bad.map((k) => `"${k}"`).join(", ")} (expected "type1" or "type2")`);
+  return { type1: probeList(v.type1, where, "probes.type1"), type2: probeList(v.type2, where, "probes.type2") };
 }
 
 function bodyRegex(pattern: unknown, where: string): RegExp {
@@ -48,7 +72,7 @@ function satisfiedBy(v: unknown, where: string): SatisfiedBy[] {
   });
 }
 
-const DECLARATIVE_KEYS = new Set(["id", "name", "question", "true", "false", "threshold", "applies_to", "satisfied_by", "why", "fix"]);
+const DECLARATIVE_KEYS = new Set(["id", "name", "question", "true", "false", "threshold", "applies_to", "satisfied_by", "why", "fix", "probes"]);
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 function declarative(o: Obj, where: string): DeclarativeSpec {
@@ -71,6 +95,7 @@ function declarative(o: Obj, where: string): DeclarativeSpec {
     satisfiedBy: satisfiedBy(o.satisfied_by, where),
     why: str(o, "why", where),
     fix: str(o, "fix", where),
+    probes: probeList(o.probes, where, "probes"),
   };
 }
 
@@ -109,7 +134,7 @@ export function parseConfig(text: string, defaults: BuiltinDefaults): Judgement[
       }
       const built = builtinById(
         String(entry.use),
-        { confidence_threshold: ct as number | undefined, applies_to: globs(entry.applies_to, where) },
+        { confidence_threshold: ct as number | undefined, applies_to: globs(entry.applies_to, where), probes: builtinProbes(entry.probes, where) },
         defaults,
       );
       if (!built) throw new ConfigError(`${where}: unknown built-in (known: ${BUILTIN_IDS.join(", ")})`);

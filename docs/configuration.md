@@ -8,13 +8,16 @@ A judgement is what the gate asks about a change. The Worker sends every applica
 
 | Key | Meaning |
 |---|---|
-| `use` | Enable a built-in (`one-way-door`). Only `confidence_threshold` and `applies_to` may be overridden. |
+| `use` | Enable a built-in (`one-way-door`). Only `confidence_threshold`, `applies_to` and `probes` may be overridden. |
 | `id`, `name` | Unique id (kebab-case) and the name shown in the comment. |
 | `question`, `true`, `false` | The yes/no question for Jev, and what each answer means. |
 | `threshold` | 0 to 1. Flagged when the probability of "true" is at least this. |
 | `applies_to` | Optional globs (`*`, `**`, `?`). Judged only if a changed file matches. Omit for always. |
 | `satisfied_by` | Required. Any one entry clears the flag: `pr_body_matches` (regex, `(?i)` prefix for case-insensitive, max 200 chars) or `file_added` (glob on an added or modified file). |
 | `why`, `fix` | The remedy shown to the author: why it matters, and what to do. |
+| `probes` | Optional. Short questions shown to the author as "Questions a reviewer will ask". On a declarative judgement: a list of questions. On `use: one-way-door`: a mapping with `type1` and/or `type2`, each a list of questions. At most 7 questions per list, each at most 300 characters. Static text; no model call. |
+
+The built-in `one-way-door` ships default probes for type 1 and type 2 verdicts, and an `ambiguous` verdict shows the type 1 list. Setting `probes.type1` or `probes.type2` replaces only that list. A declarative judgement with no `probes` shows none.
 
 **A non-empty list replaces the default.** If you list only your own judgement, `one-way-door` stops running org-wide. Add `- use: one-way-door` to keep it.
 
