@@ -168,9 +168,13 @@ describe("shipped example", () => {
     const { routing } = parseGateConfig(exampleYaml, defaults);
     expect(routing.status).toBe("ok");
     if (routing.status !== "ok") return;
-    expect(routing.rules).toContainEqual({ files: ["migrations/**", "infra/**"] });
-    expect(routing.rules).toContainEqual({ judgement: "public-api-contract" });
-    expect(routing.rules).toContainEqual({ judgement: "one-way-door", reason: "ambiguous" });
+    expect(routing.label).toBe("needs-human-review");
+    expect(routing.rules).toEqual([
+      ...DEFAULT_RULES,
+      { judgement: "public-api-contract" },
+      { judgement: "one-way-door", reason: "ambiguous" },
+      { files: ["migrations/**", "infra/**"] },
+    ]);
   });
 });
 
@@ -304,6 +308,21 @@ describe("routing block", () => {
     expect(out.judgements.map((j) => j.id)).toEqual(VALID_IDS);
   });
 
+  it("a routing config_error keeps a valid configured label", () => {
+    const text = "routing:\n  label: ready-for-people\n  human_when:\n    - judgement: nope";
+    expect(parseGateConfig(text, defaults).routing).toMatchObject({ status: "config_error", label: "ready-for-people" });
+  });
+
+  it("a routing config_error with an over-long label uses the default label", () => {
+    const text = `routing:\n  label: ${"a".repeat(51)}\n  human_when:\n    - judgement: nope`;
+    expect(parseGateConfig(text, defaults).routing).toMatchObject({ status: "config_error", label: DEFAULT_LABEL });
+  });
+
+  it("trims the label", () => {
+    const { routing } = parseGateConfig(spec('  label: " ready "'), defaults);
+    expect(routing).toMatchObject({ status: "ok", label: "ready" });
+  });
+
   it("a scalar routing value is a config_error", () => {
     expect(parseGateConfig(`${SPEC_EXAMPLE}\nrouting: 5\n`, defaults).routing.status).toBe("config_error");
   });
@@ -367,5 +386,10 @@ describe("loadGateConfig", () => {
     expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
     expect(out.note).toContain("fell back");
     expect(out.routing.status).toBe("config_error");
+  });
+
+  it("invalid judgements keep a valid routing label", async () => {
+    const out = await loadGateConfig(ghWith(async () => "judgements:\n  - use: nope\nrouting:\n  label: ready-for-people"), "o", env);
+    expect(out.routing).toMatchObject({ status: "config_error", label: "ready-for-people" });
   });
 });

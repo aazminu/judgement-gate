@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearConfigCache } from "../src/config";
 import { processPullRequest } from "../src/handler";
+import * as routing from "../src/routing";
 import type { AnalyticsSink, Env, PullRequestEvent } from "../src/types";
 
 type Call = { method: string; url: string; body?: any };
@@ -189,7 +190,7 @@ routing:
     expect(finalCheck(net.calls).conclusion).toBe("neutral");
     expect(finalCheck(net.calls).output.title).toBe("[Audit Degraded]");
     expect(labelCalls(net.calls)).toHaveLength(1);
-    expect(finalCheck(net.calls).output.summary).toContain("Review routing: human");
+    expect(finalCheck(net.calls).output.summary).toContain("Review routing: human (files: infra/**; judgement rules skipped (audit degraded))");
   });
 
   it("during a Jev outage judgement-only routing is unavailable and adds no label", async () => {
@@ -197,7 +198,7 @@ routing:
     await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
     expect(finalCheck(net.calls).conclusion).toBe("neutral");
     expect(labelCalls(net.calls)).toHaveLength(0);
-    expect(finalCheck(net.calls).output.summary).toContain("Review routing: unavailable");
+    expect(finalCheck(net.calls).output.summary).toContain("Review routing: unavailable (audit degraded)");
   });
 
   it("a failure after routing is published does not label twice", async () => {
@@ -212,6 +213,23 @@ routing:
     expect(labelCalls(net.calls)).toHaveLength(1);
     expect(finalCheck(net.calls).conclusion).toBe("neutral");
     expect(finalCheck(net.calls).output.summary).toContain("Review routing: human (config error");
+  });
+
+  it("an evaluateRouting that throws leaves the check unchanged and adds no label", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const normal = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await processPullRequest(prEvent(), await makeEnv(), normal.fetchFn);
+    clearConfigCache();
+    vi.spyOn(routing, "evaluateRouting").mockImplementation(() => {
+      throw new Error("routing blew up");
+    });
+    const net = fakeNet({ config: { status: 404 }, answers: type1, files: adrFiles });
+    await expect(processPullRequest(prEvent(), await makeEnv(), net.fetchFn)).resolves.toBeDefined();
+    expect(finalCheck(net.calls).conclusion).toBe(finalCheck(normal.calls).conclusion);
+    expect(finalCheck(net.calls).output.title).toBe(finalCheck(normal.calls).output.title);
+    expect(labelCalls(normal.calls)).toHaveLength(1);
+    expect(labelCalls(net.calls)).toHaveLength(0);
+    expect(finalCheck(net.calls).output.summary).not.toContain("Review routing");
   });
 
   it("routing never changes the check conclusion", async () => {

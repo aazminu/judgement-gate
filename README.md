@@ -58,8 +58,8 @@ npm run simulate -- 1    # terminal 3: send a signed webhook
 | 2 | same, with `docs/decisions/*.md` | SUCCESS, routed to a human (label `needs-human-review`) |
 | 3 | flagged feature, has reversal plan | SUCCESS, routed to an agent |
 | 4 | flagged feature, no plan | FAILURE + 3-line comment, routed to an agent |
-| 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too) |
-| 6 | same, with `Migration Plan:` in the body | API-contract judgement passes; one-way door can still read "Ambiguous" and fail the check |
+| 5 | breaks a public API, no migration plan (uses `examples/judgement-gate.yml`) | FAILURE: API-contract judgement fails (one-way door usually reads "Ambiguous" too); routed to a human (`public-api-contract` is in `human_when`) |
+| 6 | same, with `Migration Plan:` in the body | API-contract judgement passes; one-way door can still read "Ambiguous" and fail the check; routed to a human (`public-api-contract` is in `human_when`) |
 
 The mock logs `LABEL added on #n: ...` when the gate labels a PR (scenarios 1 and 2 also match the `migrations/**` rule in the example config). Scenarios 5 and 6 are about the per-judgement lines in the check summary, not the overall result. Borderline PRs like these pass if you lower `CONFIDENCE_THRESHOLD`; tune it in shadow mode. The mock serves `examples/judgement-gate.yml` as the org config; set `MOCK_CONFIG=path` to try your own, and edit `scripts/scenarios.mjs` to add scenarios.
 

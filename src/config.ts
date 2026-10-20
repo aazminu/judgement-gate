@@ -106,6 +106,13 @@ function routingRule(entry: unknown, i: number, judgements: Judgement[]): Routin
   return { judgement: id, reason };
 }
 
+/** The owner's label from a raw `routing:` block if it is usable, else the default; used when the block is otherwise invalid. */
+function labelOrDefault(raw: unknown): string {
+  if (!isObj(raw) || typeof raw.label !== "string") return DEFAULT_LABEL;
+  const label = raw.label.trim();
+  return label !== "" && label.length <= MAX_LABEL ? label : DEFAULT_LABEL;
+}
+
 /**
  * Validate the `routing:` block against the judgements actually in force. Absent or empty means the defaults.
  * Anything malformed throws ConfigError.
@@ -124,8 +131,8 @@ export function parseRouting(raw: unknown, judgements: Judgement[]): { rules: Ro
   let label = DEFAULT_LABEL;
   if (raw.label !== undefined) {
     if (typeof raw.label !== "string" || raw.label.trim() === "") throw new ConfigError('routing: "label" must be a non-empty string');
-    if (raw.label.length > MAX_LABEL) throw new ConfigError(`routing: "label" must be at most ${MAX_LABEL} characters`);
-    label = raw.label;
+    label = raw.label.trim();
+    if (label.length > MAX_LABEL) throw new ConfigError(`routing: "label" must be at most ${MAX_LABEL} characters`);
   }
 
   const humanWhen = raw.human_when ?? [];
@@ -152,7 +159,7 @@ export function parseGateConfig(text: string, defaults: BuiltinDefaults): { judg
       return { judgements, routing: { status: "ok", ...parseRouting(rawRouting, judgements) } };
     } catch (e) {
       if (!(e instanceof ConfigError)) throw e;
-      return { judgements, routing: { status: "config_error", message: e.message, label: DEFAULT_LABEL } };
+      return { judgements, routing: { status: "config_error", message: e.message, label: labelOrDefault(rawRouting) } };
     }
   };
   if (doc === null || doc === undefined) return withRouting(fallback(), undefined);
@@ -281,9 +288,17 @@ export async function loadGateConfig(
     return parseGateConfig(text, defaults);
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
+    // A bad judgements section or root key leaves the YAML readable, so keep the owner's routing label if it has one.
+    let rawRouting: unknown;
+    try {
+      const doc = YAML.parse(text);
+      rawRouting = isObj(doc) ? doc.routing : undefined;
+    } catch {
+      // unparseable YAML: nothing can be read, so the default label stays
+    }
     return {
       judgements: fallback(),
-      routing: { status: "config_error", message: e.message, label: DEFAULT_LABEL },
+      routing: { status: "config_error", message: e.message, label: labelOrDefault(rawRouting) },
       note: `Config error: ${e.message}; fell back to built-in judgements.`,
     };
   }

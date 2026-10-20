@@ -7,7 +7,7 @@ import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
 import { appliesToFiles } from "./glob";
 import { DEFAULT_LABEL, evaluateRouting, type RoutingResult, type RoutingSetup } from "./routing";
-import type { Env, Judgement, FetchFn, IssueCommentEvent, PullRequestEvent, Verdict } from "./types";
+import type { ChangedFile, Env, Judgement, FetchFn, IssueCommentEvent, PullRequestEvent, Verdict } from "./types";
 
 const ACTIONS = new Set(["opened", "synchronize", "reopened", "edited", "ready_for_review"]);
 
@@ -67,11 +67,19 @@ interface RoutingTarget {
 }
 
 /**
- * Record the routing result, add the label for `human` in enforce routing mode, and return the check-summary text.
+ * Evaluate routing, record it, add the label for `human` in enforce routing mode, and return the check-summary text
+ * with the result (absent if evaluation failed). `results === null` means the audit was degraded.
  * Never throws: routing must not change the check, so every failure becomes a line of text.
  */
-async function publishRouting(routing: RoutingResult, t: RoutingTarget): Promise<string> {
+async function publishRouting(
+  setup: RoutingSetup,
+  results: JudgementResult[] | null,
+  files: ChangedFile[],
+  t: RoutingTarget,
+): Promise<{ text: string; routing?: RoutingResult }> {
+  let routing: RoutingResult | undefined;
   try {
+    routing = evaluateRouting(setup, results, files);
     const reasons = routing.reasons.join("; ");
     record(t.env.ANALYTICS, {
       event: "routing",
@@ -82,20 +90,21 @@ async function publishRouting(routing: RoutingResult, t: RoutingTarget): Promise
       outcome: routing.route,
       reason: reasons.slice(0, 256),
     });
-    if (routing.route === "agent") return "Review routing: agent";
-    if (routing.route === "unavailable") return `Review routing: unavailable (${routing.reasons[0] ?? "unknown"})`;
-    if (t.routingMode === "shadow") return `[Shadow] Review routing: would have routed to a human (${reasons})`;
-    const line = `Review routing: human (${reasons})`;
+    if (routing.route === "agent") return { text: "Review routing: agent", routing };
+    if (routing.route === "unavailable") return { text: `Review routing: unavailable (${routing.reasons[0] ?? "unknown"})`, routing };
+    const shown = results === null ? `${reasons}; judgement rules skipped (audit degraded)` : reasons;
+    if (t.routingMode === "shadow") return { text: `[Shadow] Review routing: would have routed to a human (${shown})`, routing };
+    const line = `Review routing: human (${shown})`;
     try {
       await t.gh.addLabels(t.owner, t.repo, t.pr, [routing.label]);
     } catch (e) {
       console.error("judgement-gate label failed", e);
-      return `${line}\n\n_Could not add the review label: ${(e as Error).message}_`;
+      return { text: `${line}\n\n_Could not add the review label: ${(e as Error).message}_`, routing };
     }
-    return line;
+    return { text: line, routing };
   } catch (e) {
     console.error("judgement-gate routing failed", e);
-    return "";
+    return { text: "", routing };
   }
 }
 
@@ -164,8 +173,9 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     const shadow = mode === "shadow";
 
     // Routing is advisory: it never feeds `aggregate` or the check conclusion.
-    const routing = evaluateRouting(setup, results, files);
-    routingNote = asNote(await publishRouting(routing, routingTarget));
+    const published = await publishRouting(setup, results, files, routingTarget);
+    const routing = published.routing;
+    routingNote = asNote(published.text);
 
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
     let commentNote = "";
@@ -204,8 +214,8 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     }
     // Without verdicts only model-independent rules (files, config_error) can route; judgement rules are skipped.
     if (routingNote === undefined) {
-      const routing = evaluateRouting(routingSetup ?? { status: "unavailable", message: "audit degraded", label: DEFAULT_LABEL }, null, files);
-      routingNote = asNote(await publishRouting(routing, routingTarget));
+      const fallbackSetup: RoutingSetup = routingSetup ?? { status: "unavailable", message: "audit degraded", label: DEFAULT_LABEL };
+      routingNote = asNote((await publishRouting(fallbackSetup, null, files, routingTarget)).text);
     }
     // Fail open: never block hotfixes on an audit outage (Jev timeout, 5xx, malformed answer).
     await gh.completeCheckRun(

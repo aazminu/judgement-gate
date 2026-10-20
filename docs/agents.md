@@ -19,7 +19,7 @@ One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgeme
 | `failing[].suggested_template` | `{target: "pr_body"\|"file", path?, content}` to paste, or `null`. |
 | `routing` | Who the gate recommends reviews this PR. Optional: absent from older comments. See below. |
 | `routing.route` | `human`, `agent` or `unavailable` (routing could not be decided). |
-| `routing.reasons` | Array of short strings, for example `one-way-door flagged`, `one-way-door: ambiguous`, `files: migrations/**`. Built from config ids, globs and reason codes only. Empty for `agent`. |
+| `routing.reasons` | Array of short strings, for example `one-way-door flagged`, `one-way-door: ambiguous`, `files: migrations/**`. Built from config ids, globs, reason codes and config-error text, and never contains PR content. Empty for `agent`. |
 | `routing.label` | The label the gate adds to a PR routed to a human, default `needs-human-review`. |
 
 `satisfied_by` entries, by `type`:

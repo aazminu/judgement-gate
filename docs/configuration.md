@@ -53,7 +53,7 @@ A judgement that did not run (its `applies_to` matched no changed file) matches 
 
 A bad `routing:` block (an unknown key, a bad entry, an unknown judgement id or reason code, a bad label) is checked separately from `judgements:`. It never changes your judgements or the check result. Routing becomes `human` with the reason `config error: ...`, the summary says why, and the default label is added in enforce mode, so the owner notices. A YAML or schema error elsewhere in the file has the same routing result, and judgements fall back to the built-in as described below.
 
-Routing that cannot be decided does not label:
+When routing cannot be fully decided:
 
 - **The config could not be read** (GitHub 5xx, network, missing Contents permission): judgements fall back to the built-in, the summary reports routing as unavailable, and nothing is labelled. Without your rules there is nothing model-independent to apply, and a short outage should not leave a label on every PR opened in that window.
 - **The audit is degraded** (Jev timeout, 5xx, malformed answer): the check stays `neutral`, as always. Judgement-based entries are skipped, but `files:` entries and config errors still route to a human and still label. If none of those apply, the summary says routing is unavailable and nothing is labelled.
@@ -65,6 +65,7 @@ If adding the label fails (permissions, API error), the check is unchanged and t
 - It is added in enforce routing mode only. In shadow routing mode the gate does not touch the PR: the summary reads "would have routed to a human" and the result is recorded in analytics.
 - It is sticky. The gate adds it and never removes it, so a later push cannot shed the requirement. A person removes it.
 - Adding it needs the Issues read & write permission the app already has.
+- GitHub creates a missing label with a default colour, so if you want a specific colour, create the label in the repo first.
 
 ### Enforcing the review
 

@@ -105,6 +105,8 @@ Latency is the same for every judgement in one PR, so this slightly over-weights
 5. Change one judgement at a time, and keep shadow mode on for another week to see the effect. Move to `enforce` only when the disputed share is one you would accept as a blocked merge.
 6. A high `degraded_rate` means the data is thin. Fix `JEV_TIMEOUT_MS` or the Jev connection before trusting the rates.
 
+Note that `cleared` rows are PRs the model would have flagged but the author had already satisfied. They show the rule working, not an error.
+
 ## Review routing
 
 Each PR event writes one `routing` row, including in shadow mode, where the gate does not label. Only `blob1`, `blob2`, `blob4`, `blob5`, `blob6` and `double1` carry data; the other doubles are `-1` or `0`. The queries above filter on `blob1 = 'evaluation'`, so routing rows do not change them.
@@ -133,5 +135,3 @@ ORDER BY prs DESC
 Watch the human rate in shadow mode before enforcing. A flood of false Type 1 flags becomes a flood of human reviews, so read the reasons column and tune the thresholds or the `human_when` entries first. Set `ROUTING_MODE = "shadow"` to pilot routing while the check itself is enforced. A high `unavailable` share means config reads or Jev are failing, so no label is applied for those PRs.
 
 Routing to an agent depends on the model not under-classifying a real one-way door: a Type 1 change judged Type 2 goes to an agent. `files:` rules do not depend on the model and cover the paths you know are risky.
-
-Note that `cleared` rows are PRs the model would have flagged but the author had already satisfied. They show the rule working, not an error.
