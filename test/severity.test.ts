@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { aggregate } from "../src/aggregate";
+import { clearConfigCache, ConfigError, loadGateConfig, parseConfig, parseGateConfig } from "../src/config";
+import type { GitHubClient } from "../src/github";
 import { buildRequest, evaluate } from "../src/jev";
 import { compileClassifier } from "../src/judgements/classifier";
 import { oneWayDoor } from "../src/judgements/one-way-door";
-import type { JevAnswers, PrContext } from "../src/types";
+import type { Env, JevAnswers, PrContext } from "../src/types";
 
 const pr: PrContext = { title: "t", body: "", baseBranch: "main", headSha: "abc", files: [{ filename: "services/a.ts", status: "modified" }], patchExtract: "" };
 
@@ -112,5 +114,101 @@ describe("Jev request and answer handling", () => {
 
   it("a missing one-way-door answer still fails the request", async () => {
     await expect(run(answersFor({ is_additive_or_isolated: undefined }))).rejects.toThrow(/missing expected answers/);
+  });
+});
+
+describe("severity config", () => {
+  const defaults = { confidenceThreshold: 0.75 };
+  const levels = (n = 2) =>
+    Array.from({ length: n }, (_v, i) => ({ id: `P${i}`, means: `means ${i}` }));
+  const sev = (over: Record<string, unknown> = {}, classify: Record<string, unknown> = {}) => ({
+    id: "severity",
+    name: "Severity",
+    classify: { question: "How bad?", levels: levels(2), ...classify },
+    ...over,
+  });
+  const cfg = (...entries: unknown[]) => JSON.stringify({ judgements: entries });
+
+  it("parses a classifier next to the built-in, keeping level order", () => {
+    const list = parseConfig(
+      cfg({ use: "one-way-door" }, sev({ applies_to: ["services/**"] }, { levels: [{ id: "P0", means: "a" }, { id: "P1", means: "b" }, { id: "P2", means: "c" }] })),
+      defaults,
+    );
+    expect(list.map((j) => j.id)).toEqual(["one-way-door", "severity"]);
+    const s = list[1];
+    expect(s.kind).toBe("classifier");
+    expect(s.appliesTo).toEqual(["services/**"]);
+    expect(Object.keys(s.questions.q.criteria)).toEqual(["P0", "P1", "P2"]);
+  });
+
+  it("accepts free-form level ids", () => {
+    const list = parseConfig(cfg(sev({}, { levels: [{ id: "Sev1", means: "a" }, { id: "S-2", means: "b" }, { id: "L3", means: "c" }] })), defaults);
+    expect(Object.keys(list[0].questions.q.criteria)).toEqual(["Sev1", "S-2", "L3"]);
+  });
+
+  const bad: [string, string][] = [
+    ["fewer than 2 levels", cfg(sev({}, { levels: levels(1) }))],
+    ["levels not a list", cfg(sev({}, { levels: { P0: "a", P1: "b" } }))],
+    ["no levels", cfg(sev({}, { levels: undefined }))],
+    ["duplicate level ids", cfg(sev({}, { levels: [{ id: "P0", means: "a" }, { id: "P0", means: "b" }] }))],
+    ["level ids that differ only in case", cfg(sev({}, { levels: [{ id: "P0", means: "a" }, { id: "p0", means: "b" }] }))],
+    ["empty level id", cfg(sev({}, { levels: [{ id: "", means: "a" }, { id: "P1", means: "b" }] }))],
+    ["all-digit level id (JS would reorder the question's criteria)", cfg(sev({}, { levels: [{ id: "2", means: "a" }, { id: "1", means: "b" }] }))],
+    ["numeric level id", cfg(sev({}, { levels: [{ id: 0, means: "a" }, { id: 1, means: "b" }] }))],
+    ["over-long level id", cfg(sev({}, { levels: [{ id: "P".repeat(33), means: "a" }, { id: "P1", means: "b" }] }))],
+    ["level id with a space", cfg(sev({}, { levels: [{ id: "P 0", means: "a" }, { id: "P1", means: "b" }] }))],
+    ["level without means", cfg(sev({}, { levels: [{ id: "P0" }, { id: "P1", means: "b" }] }))],
+    ["level with empty means", cfg(sev({}, { levels: [{ id: "P0", means: " " }, { id: "P1", means: "b" }] }))],
+    ["unknown key in a level", cfg(sev({}, { levels: [{ id: "P0", means: "a", mean: "x" }, { id: "P1", means: "b" }] }))],
+    ["missing question", cfg(sev({}, { question: undefined }))],
+    ["unknown key in classify", cfg(sev({}, { threshold: 0.5 }))],
+    ["unknown key on the entry", cfg(sev({ threshold: 0.5 }))],
+    ["satisfied_by on a classifier", cfg(sev({ satisfied_by: [{ file_added: "x" }] }))],
+    ["missing name", cfg(sev({ name: undefined }))],
+    ["classify not a mapping", cfg({ id: "severity", name: "S", classify: [] })],
+    ["non-kebab id", cfg(sev({ id: "Severity Level" }))],
+    ["id collides with a built-in", cfg(sev({ id: "one-way-door" }))],
+    ["duplicate judgement id", cfg(sev(), sev())],
+    ["empty applies_to", cfg(sev({ applies_to: [] }))],
+    ["classify together with use", cfg({ use: "one-way-door", classify: {} })],
+  ];
+  it.each(bad)("rejects %s", (_n, text) => {
+    expect(() => parseConfig(text, defaults)).toThrow(ConfigError);
+  });
+
+  it("names the judgement and level in errors", () => {
+    expect(() => parseConfig(cfg(sev({}, { levels: [{ id: "P0", means: "a" }, { id: "P1" }] })), defaults)).toThrow(/severity.*levels\[1\].*means/);
+  });
+
+  it("a bad severity block falls back to the built-in with a note, and the routing label survives", async () => {
+    clearConfigCache();
+    const text = ["judgements:", "  - id: severity", "    name: S", "    classify:", "      question: q", "      levels: []", "routing:", "  label: mine", ""].join("\n");
+    const gh = { getFileContents: async () => text } as unknown as GitHubClient;
+    const out = await loadGateConfig(gh, "o", { CONFIDENCE_THRESHOLD: "0.75" } as Env);
+    expect(out.judgements.map((j) => j.id)).toEqual(["one-way-door"]);
+    expect(out.note).toMatch(/Config error: .*severity/);
+    expect(out.routing).toMatchObject({ status: "config_error", label: "mine" });
+    clearConfigCache();
+  });
+
+  describe("routing interaction", () => {
+    const withRouting = (rule: unknown) => parseGateConfig(JSON.stringify({ judgements: [sev()], routing: { human_when: [rule] } }), defaults).routing;
+
+    it("a bare judgement rule naming a classifier is a routing config error (it can never match)", () => {
+      const r = withRouting({ judgement: "severity" });
+      expect(r.status).toBe("config_error");
+      expect((r as { message: string }).message).toMatch(/severity.*classifier.*never/);
+    });
+
+    it("judgement + severity_unreported is accepted", () => {
+      expect(withRouting({ judgement: "severity", reason: "severity_unreported" }).status).toBe("ok");
+    });
+
+    it("an invalid routing block does not discard the classifier", () => {
+      const text = JSON.stringify({ judgements: [sev()], routing: { human_when: [{ judgement: "severity" }] } });
+      const g = parseGateConfig(text, defaults);
+      expect(g.judgements.map((j) => j.id)).toEqual(["severity"]);
+      expect(g.routing.status).toBe("config_error");
+    });
   });
 });
