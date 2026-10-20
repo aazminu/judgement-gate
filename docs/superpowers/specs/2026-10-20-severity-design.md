@@ -35,7 +35,7 @@ Validation (existing style, `ConfigError`, bad config falls back to the built-in
 - `id` kebab-case, not a built-in id; duplicate judgement ids rejected (existing check).
 - `classify` keys are exactly `question` and `levels`.
 - At least 2 levels. Each level has exactly `id` and `means`, both non-empty strings.
-- Level `id`: 1 to 32 characters, letters, digits, `.`, `_`, `-`, starting with a letter or digit (`P0`, `Sev1`, `S-1`). Free-form: nothing assumes a `P` prefix. Unique ignoring case (so `P1` and `p1` cannot both exist). A bare YAML number (`id: 1`) is rejected with the same message as any non-string; quote it.
+- Level `id`: 1 to 32 characters, letters, digits, `.`, `_`, `-`, starting with a letter or digit (`P0`, `Sev1`, `S-1`). Free-form: nothing assumes a `P` prefix. Unique ignoring case (so `P1` and `p1` cannot both exist). Digit-only ids (`"1"`) are rejected: the levels go to Jev as an object and JS orders digit-only keys numerically, which would silently reorder them (found by a test). A bare YAML number is rejected as a non-string.
 
 ## Compiled judgement
 
