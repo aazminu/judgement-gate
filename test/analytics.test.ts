@@ -72,7 +72,8 @@ describe("evaluation events", () => {
   it("records a flagged one-way-door with probability, confidence, mode and latency", async () => {
     const { points, s } = sink();
     await processPullRequest(prEvent(), await makeEnv({ ANALYTICS: s }), net(flaggedJev));
-    expect(points).toHaveLength(1);
+    // One evaluation point per judgement, then the PR's single routing point.
+    expect(points.map((x) => x.blobs?.[0])).toEqual(["evaluation", "routing"]);
     const p = points[0];
     expect(p.indexes).toEqual(["o/r"]);
     expect(p.blobs?.slice(0, 6)).toEqual(["evaluation", "o/r", "one-way-door", "shadow", "flagged", "type1_no_adr"]);
@@ -93,7 +94,7 @@ describe("evaluation events", () => {
   it("records a degraded outcome when Jev is down", async () => {
     const { points, s } = sink();
     await processPullRequest(prEvent(), await makeEnv({ ANALYTICS: s }), net(() => new Response("boom", { status: 503 })));
-    expect(points).toHaveLength(1);
+    expect(points.map((x) => x.blobs?.[0])).toEqual(["evaluation", "routing"]);
     expect(points[0].blobs?.[2]).toBe("one-way-door");
     expect(points[0].blobs?.[4]).toBe("degraded");
     expect(points[0].doubles?.[6]).toBe(1);
@@ -138,7 +139,7 @@ describe("parseFalsePositive", () => {
   });
   it("the remediation comment names the command but does not itself parse as one", () => {
     const md = renderComment(
-      [{ judgement: oneWayDoor(), verdict: { conclusion: "failure", reason: "type1_no_adr", summary: "s" } }],
+      [{ judgement: oneWayDoor(), verdict: { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true } }],
       { owner: "o", repo: "r", headRef: "abc" },
     );
     expect(md).toContain("/judgement-gate false-positive one-way-door");

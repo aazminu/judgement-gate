@@ -1,12 +1,13 @@
 import { parseFalsePositive, record } from "./analytics";
 import { aggregate, type JudgementResult } from "./aggregate";
-import { loadJudgements } from "./config";
+import { loadGateConfig } from "./config";
 import { renderComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
 import { appliesToFiles } from "./glob";
-import type { Env, Judgement, FetchFn, IssueCommentEvent, PullRequestEvent, Verdict } from "./types";
+import { DEFAULT_LABEL, evaluateRouting, type RoutingResult, type RoutingSetup } from "./routing";
+import type { ChangedFile, Env, Judgement, FetchFn, IssueCommentEvent, PullRequestEvent, Verdict } from "./types";
 
 const ACTIONS = new Set(["opened", "synchronize", "reopened", "edited", "ready_for_review"]);
 
@@ -54,6 +55,59 @@ function handleIssueComment(ev: IssueCommentEvent, env: Env): Response {
   return new Response("recorded", { status: 202 });
 }
 
+const asNote = (text: string) => (text ? `\n\n${text}` : "");
+
+interface RoutingTarget {
+  gh: GitHubClient;
+  env: Env;
+  owner: string;
+  repo: string;
+  pr: number;
+  routingMode: string;
+}
+
+/**
+ * Evaluate routing, record it, add the label for `human` in enforce routing mode, and return the check-summary text
+ * with the result (absent if evaluation failed). `results === null` means the audit was degraded.
+ * Never throws: routing must not change the check, so every failure becomes a line of text.
+ */
+async function publishRouting(
+  setup: RoutingSetup,
+  results: JudgementResult[] | null,
+  files: ChangedFile[],
+  t: RoutingTarget,
+): Promise<{ text: string; routing?: RoutingResult }> {
+  let routing: RoutingResult | undefined;
+  try {
+    routing = evaluateRouting(setup, results, files);
+    const reasons = routing.reasons.join("; ");
+    record(t.env.ANALYTICS, {
+      event: "routing",
+      repo: `${t.owner}/${t.repo}`,
+      pr: t.pr,
+      judgement: "",
+      mode: t.routingMode,
+      outcome: routing.route,
+      reason: reasons.slice(0, 256),
+    });
+    if (routing.route === "agent") return { text: "Review routing: agent", routing };
+    if (routing.route === "unavailable") return { text: `Review routing: unavailable (${routing.reasons[0] ?? "unknown"})`, routing };
+    const shown = results === null ? `${reasons}; judgement rules skipped (audit degraded)` : reasons;
+    if (t.routingMode === "shadow") return { text: `[Shadow] Review routing: would have routed to a human (${shown})`, routing };
+    const line = `Review routing: human (${shown})`;
+    try {
+      await t.gh.addLabels(t.owner, t.repo, t.pr, [routing.label]);
+    } catch (e) {
+      console.error("judgement-gate label failed", e);
+      return { text: `${line}\n\n_Could not add the review label: ${(e as Error).message}_`, routing };
+    }
+    return { text: line, routing };
+  } catch (e) {
+    console.error("judgement-gate routing failed", e);
+    return { text: "", routing };
+  }
+}
+
 export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn: FetchFn): Promise<Verdict> {
   const owner = ev.repository.owner.login;
   const repo = ev.repository.name;
@@ -61,7 +115,12 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
   const started = Date.now();
   const repoName = `${owner}/${repo}`;
   const mode = env.MODE ?? "shadow";
+  const routingMode = env.ROUTING_MODE ?? env.MODE ?? "shadow";
   let evaluated: Judgement[] = [];
+  // Outside the try so the degraded path can still apply model-independent routing rules.
+  let routingSetup: RoutingSetup | undefined;
+  // Set once routing has been published, so a late failure (e.g. completing the check) never labels twice.
+  let routingNote: string | undefined;
   const token = await installationToken(env, ev.installation!.id, fetchFn);
   const gh = new GitHubClient(token, fetchFn, env.GITHUB_API_URL);
 
@@ -69,9 +128,11 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
   const [check, files] = await Promise.all([gh.createCheckRun(owner, repo, ev.pull_request.head.sha), gh.listFiles(owner, repo, pr)]);
 
   let configNote = "";
+  const routingTarget: RoutingTarget = { gh, env, owner, repo, pr, routingMode };
   try {
     const ctx = assembleContext(ev, files);
-    const { judgements: all, note } = await loadJudgements(gh, owner, env);
+    const { judgements: all, routing: setup, note } = await loadGateConfig(gh, owner, env);
+    routingSetup = setup;
     if (note) configNote = `\n\n_${note}_`;
     const applicable = all.filter((j) => appliesToFiles(j.appliesTo, files));
     evaluated = applicable;
@@ -111,12 +172,17 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     }
     const shadow = mode === "shadow";
 
+    // Routing is advisory: it never feeds `aggregate` or the check conclusion.
+    const published = await publishRouting(setup, results, files, routingTarget);
+    const routing = published.routing;
+    routingNote = asNote(published.text);
+
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
     let commentNote = "";
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
     if (failing.length > 0) {
       try {
-        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode));
+        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing));
       } catch (e) {
         console.error("judgement-gate comment failed", e);
         commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
@@ -130,7 +196,7 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
       check.id,
       shadow ? "success" : verdict.conclusion,
       shadow ? `[Shadow] ${verdict.summary}` : verdict.summary,
-      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${detail}` : detail) + configNote + commentNote,
+      (shadow ? `Shadow mode: would have concluded **${verdict.conclusion}**.\n\n${detail}` : detail) + routingNote + configNote + commentNote,
     );
     return verdict;
   } catch (e) {
@@ -146,8 +212,20 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
         latencyMs: Date.now() - started,
       });
     }
+    // Without verdicts only model-independent rules (files, config_error) can route; judgement rules are skipped.
+    if (routingNote === undefined) {
+      const fallbackSetup: RoutingSetup = routingSetup ?? { status: "unavailable", message: "audit degraded", label: DEFAULT_LABEL };
+      routingNote = asNote((await publishRouting(fallbackSetup, null, files, routingTarget)).text);
+    }
     // Fail open: never block hotfixes on an audit outage (Jev timeout, 5xx, malformed answer).
-    await gh.completeCheckRun(owner, repo, check.id, "neutral", "[Audit Degraded]", `Evaluation unavailable: ${(e as Error).message}${configNote}`);
+    await gh.completeCheckRun(
+      owner,
+      repo,
+      check.id,
+      "neutral",
+      "[Audit Degraded]",
+      `Evaluation unavailable: ${(e as Error).message}${routingNote}${configNote}`,
+    );
     return { conclusion: "neutral", reason: "degraded", summary: "[Audit Degraded]" };
   }
 }

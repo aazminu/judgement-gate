@@ -4,18 +4,18 @@ In shadow mode the gate never blocks, so the useful output is data: how often ea
 
 ## What is recorded
 
-The Worker writes one [Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) data point per judgement per evaluation (`event = 'evaluation'`) and one per human reply (`event = 'feedback'`). The `[[analytics_engine_datasets]]` block in `wrangler.toml` binds the dataset `judgement_gate`. Remove the block and nothing is recorded and nothing else changes. A failed write is logged and ignored.
+The Worker writes one [Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) data point per judgement per evaluation (`event = 'evaluation'`) and one per human reply (`event = 'feedback'`). It also writes one routing data point per PR (`event = 'routing'`, see [Review routing](#review-routing)). The `[[analytics_engine_datasets]]` block in `wrangler.toml` binds the dataset `judgement_gate`. Remove the block and nothing is recorded and nothing else changes. A failed write is logged and ignored.
 
 Only ids, numbers and enum strings are stored. Never the PR title, body, diff or commenter identity.
 
 | Column | Meaning |
 | --- | --- |
 | `index1`, `blob2` | `owner/repo` |
-| `blob1` | `evaluation` or `feedback` |
-| `blob3` | judgement id |
-| `blob4` | `shadow` or `enforce` |
-| `blob5` | `flagged`, `passed`, `cleared` (over threshold but satisfied by an ADR or `satisfied_by` rule), `degraded` (Jev failed), `false_positive` |
-| `blob6` | verdict reason, such as `type1_no_adr` |
+| `blob1` | `evaluation`, `feedback` or `routing` |
+| `blob3` | judgement id (empty for `routing`) |
+| `blob4` | `shadow` or `enforce` (for `routing`, the routing mode) |
+| `blob5` | `flagged`, `passed`, `cleared` (over threshold but satisfied by an ADR or `satisfied_by` rule), `degraded` (Jev failed), `false_positive`; for `routing`: `human`, `agent` or `unavailable` |
+| `blob6` | verdict reason, such as `type1_no_adr`; for `routing`, the reasons joined with `; ` (at most 256 characters), such as `one-way-door flagged; files: migrations/**` |
 | `blob7` | commenter's `author_association` (feedback only) |
 | `double1` | PR number |
 | `double2` | flagged, 0 or 1 |
@@ -106,3 +106,32 @@ Latency is the same for every judgement in one PR, so this slightly over-weights
 6. A high `degraded_rate` means the data is thin. Fix `JEV_TIMEOUT_MS` or the Jev connection before trusting the rates.
 
 Note that `cleared` rows are PRs the model would have flagged but the author had already satisfied. They show the rule working, not an error.
+
+## Review routing
+
+Each PR event writes one `routing` row, including in shadow mode, where the gate does not label. Only `blob1`, `blob2`, `blob4`, `blob5`, `blob6` and `double1` carry data; the other doubles are `-1` or `0`. The queries above filter on `blob1 = 'evaluation'`, so routing rows do not change them.
+
+**Human rate**
+
+```sql
+SELECT blob5 AS route,
+       sum(_sample_interval) AS prs
+FROM judgement_gate
+WHERE blob1 = 'routing' AND timestamp > NOW() - INTERVAL '14' DAY
+GROUP BY route
+```
+
+**Which reasons send PRs to a human**
+
+```sql
+SELECT blob6 AS reasons,
+       sum(_sample_interval) AS prs
+FROM judgement_gate
+WHERE blob1 = 'routing' AND blob5 = 'human' AND timestamp > NOW() - INTERVAL '14' DAY
+GROUP BY reasons
+ORDER BY prs DESC
+```
+
+Watch the human rate in shadow mode before enforcing. A flood of false Type 1 flags becomes a flood of human reviews, so read the reasons column and tune the thresholds or the `human_when` entries first. Set `ROUTING_MODE = "shadow"` to pilot routing while the check itself is enforced. A high `unavailable` share means config reads or Jev are failing, so no label is applied for those PRs.
+
+Routing to an agent depends on the model not under-classifying a real one-way door: a Type 1 change judged Type 2 goes to an agent. `files:` rules do not depend on the model and cover the paths you know are risky.

@@ -1,6 +1,7 @@
 import type { JudgementResult } from "./aggregate";
 import { FALSE_POSITIVE_COMMAND } from "./analytics";
 import { COMMENT_MARKER } from "./github";
+import type { RoutingResult } from "./routing";
 import type { RemedyContext } from "./types";
 
 export const AGENT_BLOCK_VERSION = 1;
@@ -9,7 +10,7 @@ export const AGENT_BLOCK_VERSION = 1;
 const safeJson = (o: unknown) => JSON.stringify(o).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
 
 /** Hidden, machine-readable twin of the comment. Ids, reasons, numbers and fix templates only: no PR or diff content. */
-function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string): string {
+function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string, routing?: RoutingResult): string {
   const payload = {
     schema: AGENT_BLOCK_VERSION,
     mode,
@@ -25,12 +26,13 @@ function agentBlock(failing: JudgementResult[], rc: RemedyContext, mode: string)
         suggested_template: hint?.suggested_template ?? null,
       };
     }),
+    ...(routing && { routing: { route: routing.route, reasons: routing.reasons, label: routing.label } }),
   };
   return `<!-- judgement-gate:v${AGENT_BLOCK_VERSION} ${safeJson(payload)} -->`;
 }
 
 /** One comment for the PR: a teaching section (why + fix) per failing judgement. */
-export function renderComment(failing: JudgementResult[], rc: RemedyContext, mode = "shadow"): string {
+export function renderComment(failing: JudgementResult[], rc: RemedyContext, mode = "shadow", routing?: RoutingResult): string {
   const heading =
     failing.length === 1 ? failing[0].verdict.summary : `${failing.length} judgements need attention`;
   const sections = failing.map(({ judgement, verdict }) => {
@@ -40,5 +42,5 @@ export function renderComment(failing: JudgementResult[], rc: RemedyContext, mod
     parts.push("", `<sub>Not a real issue? Reply \`${FALSE_POSITIVE_COMMAND} ${judgement.id}\` to help calibrate.</sub>`);
     return parts.join("\n");
   });
-  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode)}`;
+  return `${COMMENT_MARKER}\n### judgement-gate: ${heading}\n\n${sections.join("\n\n")}\n\n${agentBlock(failing, rc, mode, routing)}`;
 }

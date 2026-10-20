@@ -5,12 +5,12 @@ export const FALSE_POSITIVE_COMMAND = "/judgement-gate false-positive";
 /**
  * Workers Analytics Engine row layout (keep docs/calibration.md in step):
  *   index1  owner/repo
- *   blob1   event: "evaluation" | "feedback"
+ *   blob1   event: "evaluation" | "feedback" | "routing"
  *   blob2   owner/repo
- *   blob3   judgement id
- *   blob4   mode: "shadow" | "enforce"
- *   blob5   outcome: "flagged" | "passed" | "cleared" | "degraded" | "false_positive"
- *   blob6   verdict reason ("" for feedback)
+ *   blob3   judgement id ("" for routing)
+ *   blob4   mode: "shadow" | "enforce" (the routing mode for routing)
+ *   blob5   outcome: "flagged" | "passed" | "cleared" | "degraded" | "false_positive" | "human" | "agent" | "unavailable"
+ *   blob6   verdict reason ("" for feedback; routing reasons joined with "; ", at most 256 chars, for routing)
  *   blob7   commenter's author_association ("" for evaluation)
  *   double1 PR number
  *   double2 flagged (0/1)
@@ -22,12 +22,12 @@ export const FALSE_POSITIVE_COMMAND = "/judgement-gate false-positive";
  * Only ids, numbers and enum-like strings: never PR title, body, diff or commenter identity.
  */
 export interface AnalyticsEvent {
-  event: "evaluation" | "feedback";
+  event: "evaluation" | "feedback" | "routing";
   repo: string;
   pr: number;
   judgement: string;
   mode: string;
-  outcome: "flagged" | "passed" | "cleared" | "degraded" | "false_positive";
+  outcome: "flagged" | "passed" | "cleared" | "degraded" | "false_positive" | "human" | "agent" | "unavailable";
   reason?: string;
   association?: string;
   probability?: number;

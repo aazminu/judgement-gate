@@ -17,6 +17,10 @@ One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgeme
 | `failing[].probability`, `.threshold` | Model probability and flag threshold, or `null`. |
 | `failing[].satisfied_by` | Ways to clear it; **any one** is enough (see below). |
 | `failing[].suggested_template` | `{target: "pr_body"\|"file", path?, content}` to paste, or `null`. |
+| `routing` | Who the gate recommends reviews this PR. Optional: absent from older comments. See below. |
+| `routing.route` | `human`, `agent` or `unavailable` (routing could not be decided). |
+| `routing.reasons` | Array of short strings, for example `one-way-door flagged`, `one-way-door: ambiguous`, `files: migrations/**`. Built from config ids, globs, reason codes and config-error text, and never contains PR content. Empty for `agent`. |
+| `routing.label` | The label the gate adds to a PR routed to a human, default `needs-human-review`. |
 
 `satisfied_by` entries, by `type`:
 
@@ -25,6 +29,14 @@ One line, an HTML comment (invisible when rendered). Find it with `/<!-- judgeme
 - `file_added`: add or modify a file matching `glob` (`example_path` is a concrete choice).
 
 Built-in `one-way-door`: `type1_no_adr` → `file_added` `docs/decisions/*.md`; `type2_no_plan` → `pr_body_fields` `Reversal Trigger` and `Rollback Path` (plus `Owner`); `ambiguous` → either of the two.
+
+## Routing
+
+`routing` is added only when a remediation comment is posted, that is, when at least one judgement failed. A PR with no failing judgement gets no comment and so no block; its routing is in the PR label and the check summary. The schema number stays at 1 because the field is additive.
+
+`routing.route` is a recommendation and does not change the check. It reports the result whether or not the label is applied: in shadow routing mode the gate does not label, but the block still shows what it would have done.
+
+If `route` is `human`, clearing a failure does not remove the need for a human. Fixing the judgement turns the check green; a person still reviews the PR. Leave the label alone: the gate never removes it, and only a person should. Say in the PR description what the human should look at.
 
 ## How an agent should react
 

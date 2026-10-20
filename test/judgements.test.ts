@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appliesToFiles, matchesGlob } from "../src/glob";
+import { compileDeclarative } from "../src/judgements/declarative";
 import { oneWayDoor } from "../src/judgements/one-way-door";
 import type { JevAnswers, PrContext } from "../src/types";
 
@@ -87,5 +88,64 @@ describe("one-way-door judgement", () => {
   });
   it("carries appliesTo", () => {
     expect(oneWayDoor({ appliesTo: ["db/**"] }).appliesTo).toEqual(["db/**"]);
+  });
+});
+
+describe("fired and reasons", () => {
+  const src = [{ filename: "src/a.ts", status: "modified" }];
+  const withAdr = [...src, { filename: "docs/decisions/0001-x.md", status: "added" }];
+  const cases: [string, JevAnswers, PrContext["files"], string, boolean][] = [
+    ["type1 without ADR", answers({ one: 0.9, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }), src, "type1_no_adr", true],
+    ["type1 with ADR", answers({ one: 0.9, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }), withAdr, "type1_adr", true],
+    ["ambiguous", answers({ one: 0.05, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.5 }), src, "ambiguous", false],
+    ["type2 with plan", answers({ one: 0.05, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }), src, "type2_ok", false],
+    ["type2 without plan", answers({ one: 0.05, add: 0.9, rev: 0.1, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }), src, "type2_no_plan", false],
+  ];
+
+  it.each(cases)("one-way-door %s", (_name, a, files, reason, fired) => {
+    const j = oneWayDoor();
+    const v = j.decide(a, pr(files));
+    expect(v.reason).toBe(reason);
+    expect(v.fired).toBe(fired);
+    expect(j.reasons).toContain(reason);
+  });
+
+  it("one-way-door lists every reason code", () => {
+    expect(oneWayDoor().reasons).toEqual(["type1_adr", "type1_no_adr", "ambiguous", "type2_ok", "type2_no_plan"]);
+  });
+
+  describe("declarative", () => {
+    const j = compileDeclarative({
+      id: "x",
+      name: "X",
+      question: "q?",
+      whenTrue: "t",
+      whenFalse: "f",
+      threshold: 0.6,
+      satisfiedBy: [{ pr_body_matches: /^Plan:/m }],
+      why: "w",
+      fix: "f",
+    });
+    const ans = (p: number): JevAnswers => ({ q: { noul: p } });
+    const prBody = (body: string): PrContext => ({ ...pr(), body });
+
+    it("over threshold and unsatisfied fails and fired", () => {
+      const v = j.decide(ans(0.9), prBody("nothing"));
+      expect(v.conclusion).toBe("failure");
+      expect(v.fired).toBe(true);
+    });
+    it("over threshold and satisfied succeeds and fired", () => {
+      const v = j.decide(ans(0.9), prBody("Plan: y"));
+      expect(v.conclusion).toBe("success");
+      expect(v.fired).toBe(true);
+    });
+    it("under threshold succeeds and did not fire", () => {
+      const v = j.decide(ans(0.2), prBody("nothing"));
+      expect(v.conclusion).toBe("success");
+      expect(v.fired).toBe(false);
+    });
+    it("lists its reason codes", () => {
+      expect(j.reasons).toEqual(["x_unsatisfied", "x_ok"]);
+    });
   });
 });
