@@ -84,6 +84,8 @@ export interface JudgementVerdict {
   conclusion: "success" | "failure";
   reason: string;
   summary: string;
+  /** True when the judgement's trigger condition held, whether or not the PR then cleared it. */
+  fired: boolean;
   signals?: string;
   /** Numbers for calibration logging only; never affects the verdict. */
   metrics?: { probability?: number; confidence?: number; cleared?: boolean };
@@ -116,6 +118,8 @@ export interface Judgement {
   appliesTo?: string[];
   /** Send question keys without the `${id}.` prefix. Only the built-in one-way-door uses this, to keep its original Jev contract. */
   unprefixedKeys?: boolean;
+  /** Every reason code `decide` can return. */
+  reasons: string[];
   questions: Record<string, JevQuestion>;
   decide(answers: JevAnswers, pr: PrContext): JudgementVerdict;
   remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };

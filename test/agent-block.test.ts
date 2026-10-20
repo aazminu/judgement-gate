@@ -19,7 +19,7 @@ const failing = (judgement: Judgement, verdict: JudgementVerdict) => [{ judgemen
 describe("agent block", () => {
   it("one-way-door Type 1: ADR glob, still has marker, hint and human text", () => {
     const md = renderComment(
-      failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", metrics: { probability: 0.9 } }),
+      failing(oneWayDoor(), { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true, metrics: { probability: 0.9 } }),
       rc,
       "enforce",
     );
@@ -38,7 +38,7 @@ describe("agent block", () => {
   });
 
   it("one-way-door Type 2: required PR body fields and a pasteable template", () => {
-    const { data } = parseBlock(renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type2_no_plan", summary: "s" }), rc));
+    const { data } = parseBlock(renderComment(failing(oneWayDoor(), { conclusion: "failure", reason: "type2_no_plan", summary: "s", fired: false }), rc));
     expect(data.mode).toBe("shadow");
     const f = data.failing[0];
     expect(f.satisfied_by[0]).toMatchObject({ type: "pr_body_fields", fields: ["Reversal Trigger", "Rollback Path"] });
@@ -76,7 +76,7 @@ describe("agent block", () => {
       id: "x", name: "a --> <script>", question: "q", whenTrue: "t", whenFalse: "f", threshold: 0.5,
       satisfiedBy: [{ pr_body_matches: /-->/ }], why: "w", fix: "f",
     });
-    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s" }), rc);
+    const md = renderComment(failing(j, { conclusion: "failure", reason: "x_unsatisfied", summary: "s", fired: true }), rc);
     const block = md.split("\n").find((l) => l.startsWith("<!-- judgement-gate:v1"))!;
     expect(block.indexOf("-->")).toBe(block.length - 3);
     expect(parseBlock(md).data.failing[0].name).toBe("a --> <script>");

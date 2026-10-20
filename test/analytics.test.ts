@@ -138,7 +138,7 @@ describe("parseFalsePositive", () => {
   });
   it("the remediation comment names the command but does not itself parse as one", () => {
     const md = renderComment(
-      [{ judgement: oneWayDoor(), verdict: { conclusion: "failure", reason: "type1_no_adr", summary: "s" } }],
+      [{ judgement: oneWayDoor(), verdict: { conclusion: "failure", reason: "type1_no_adr", summary: "s", fired: true } }],
       { owner: "o", repo: "r", headRef: "abc" },
     );
     expect(md).toContain("/judgement-gate false-positive one-way-door");
