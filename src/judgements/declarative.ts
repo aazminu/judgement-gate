@@ -14,6 +14,7 @@ export interface DeclarativeSpec {
   satisfiedBy: SatisfiedBy[];
   why: string;
   fix: string;
+  probes?: string[];
 }
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
@@ -47,6 +48,7 @@ export function compileDeclarative(spec: DeclarativeSpec): Judgement {
       return { conclusion: "success", reason: `${spec.id}_ok`, summary: `${spec.name}: ok`, fired: over, signals, metrics: { ...metrics, cleared: over } };
     },
     remedy: () => ({ why: spec.why, fix: spec.fix }),
+    probes: () => [...(spec.probes ?? [])],
     agent: () => ({
       threshold: spec.threshold,
       satisfied_by: spec.satisfiedBy.map((r) =>

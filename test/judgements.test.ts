@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { appliesToFiles, matchesGlob } from "../src/glob";
 import { compileDeclarative } from "../src/judgements/declarative";
-import { oneWayDoor } from "../src/judgements/one-way-door";
+import { DEFAULT_PROBES, oneWayDoor } from "../src/judgements/one-way-door";
 import type { JevAnswers, PrContext } from "../src/types";
 
 describe("glob", () => {
@@ -88,6 +88,37 @@ describe("one-way-door judgement", () => {
   });
   it("carries appliesTo", () => {
     expect(oneWayDoor({ appliesTo: ["db/**"] }).appliesTo).toEqual(["db/**"]);
+  });
+});
+
+describe("one-way-door probes", () => {
+  const j = oneWayDoor();
+  const noPlan = answers({ one: 0.02, add: 0.9, rev: 0.3, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 });
+  it("type1_no_adr gets the type 1 probes", () => {
+    const v = j.decide(type1, pr());
+    expect(v.reason).toBe("type1_no_adr");
+    expect(j.probes!(v)).toEqual(DEFAULT_PROBES.type1);
+    expect(DEFAULT_PROBES.type1).toHaveLength(5);
+  });
+  it("type2_no_plan gets the type 2 probes", () => {
+    const v = j.decide(noPlan, pr());
+    expect(v.reason).toBe("type2_no_plan");
+    expect(j.probes!(v)).toEqual(DEFAULT_PROBES.type2);
+    expect(DEFAULT_PROBES.type2).toHaveLength(3);
+  });
+  it("ambiguous gets the type 1 probes", () => {
+    const low = answers({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.5 });
+    const v = j.decide(low, pr());
+    expect(v.reason).toBe("ambiguous");
+    expect(j.probes!(v)).toEqual(DEFAULT_PROBES.type1);
+  });
+  it("a passing verdict has no probes", () => {
+    expect(j.probes!(j.decide(type2, pr()))).toEqual([]);
+  });
+  it("options override one list and keep the other default", () => {
+    const custom = oneWayDoor({ probes: { type2: ["Custom?"] } });
+    expect(custom.probes!(custom.decide(noPlan, pr()))).toEqual(["Custom?"]);
+    expect(custom.probes!(custom.decide(type1, pr()))).toEqual(DEFAULT_PROBES.type1);
   });
 });
 

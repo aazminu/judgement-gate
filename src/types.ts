@@ -133,4 +133,6 @@ export interface Judgement {
   remedy(v: JudgementVerdict, rc: RemedyContext): { why: string; fix: string };
   /** Structured counterpart of the remedy, embedded in the comment for agents. */
   agent?(v: JudgementVerdict, rc: RemedyContext): AgentHint;
+  /** Questions a reviewer will ask for this verdict; authored, static, may be empty. */
+  probes?(v: JudgementVerdict): string[];
 }

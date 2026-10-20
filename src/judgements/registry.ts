@@ -1,9 +1,10 @@
 import type { Judgement } from "../types";
-import { oneWayDoor } from "./one-way-door";
+import { oneWayDoor, type OneWayDoorProbes } from "./one-way-door";
 
 export interface BuiltinOverrides {
   confidence_threshold?: number;
   applies_to?: string[];
+  probes?: OneWayDoorProbes;
 }
 
 export interface BuiltinDefaults {
@@ -18,6 +19,7 @@ export function builtinById(id: string, overrides: BuiltinOverrides, defaults: B
       return oneWayDoor({
         confidenceThreshold: overrides.confidence_threshold ?? defaults.confidenceThreshold,
         appliesTo: overrides.applies_to,
+        probes: overrides.probes,
       });
     default:
       return undefined;

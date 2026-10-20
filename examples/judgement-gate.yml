@@ -4,9 +4,12 @@
 #
 # Note: a non-empty list REPLACES the default. List `use: one-way-door` to keep it running.
 judgements:
-  # Built-in: is this a one-way door? Optional overrides: confidence_threshold, applies_to.
+  # Built-in: is this a one-way door? Optional overrides: confidence_threshold, applies_to, probes.
   - use: one-way-door
     confidence_threshold: 0.75
+    # probes:                            # optional: replace the built-in questions shown to the author
+    #   type1: ["Who else reads this table, and how do you know?"]
+    #   type2: ["What signal tells you to roll back, and who watches it?"]
 
   # Declarative: one yes/no question for the model, a threshold, and how an author clears it.
   - id: public-api-contract
@@ -21,6 +24,9 @@ judgements:
       - file_added: "docs/api-changes/*.md"
     why: "Consumers cannot roll back with us. Breaking changes need a migration plan."
     fix: "Add a 'Migration Plan:' line to the PR description, or a note under docs/api-changes/."
+    probes:                              # optional: up to 7 short questions a reviewer will ask
+      - "Which consumers call the changed endpoint or field, and how do you know?"
+      - "What do they see during the rollout window, with old and new versions side by side?"
 
   # Classifier: labels the PR with a level you define, and never fails the check. Order the levels most
   # severe first. There is no built-in rubric: what P0 means is for your org to write.
