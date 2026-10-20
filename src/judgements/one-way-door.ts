@@ -29,13 +29,35 @@ function toJevResult(a: JevAnswers): JevResult {
   };
 }
 
+export interface OneWayDoorProbes {
+  type1?: string[];
+  type2?: string[];
+}
+
+export const DEFAULT_PROBES: { type1: string[]; type2: string[] } = {
+  type1: [
+    "What else reads or writes this: other services, jobs, reports, exports? How do you know?",
+    "What breaks while old and new code run side by side during the rollout?",
+    "If you revert, what survives? If data is lost, how do you get it back and how long does that take?",
+    "What tells you within the first hour that this was wrong, and who is watching?",
+    "Could this be split into steps that are each reversible? If not, why not?",
+  ],
+  type2: [
+    "What signal tells you to roll back, and who watches it?",
+    "What does the flag or config default to, and what happens if it flips unexpectedly?",
+    "Does anything written by the new code outlive a rollback?",
+  ],
+};
+
 export interface OneWayDoorOptions {
   confidenceThreshold?: number;
   appliesTo?: string[];
+  probes?: OneWayDoorProbes;
 }
 
 export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
   const confidenceThreshold = opts.confidenceThreshold ?? 0.75;
+  const probes = { type1: opts.probes?.type1 ?? DEFAULT_PROBES.type1, type2: opts.probes?.type2 ?? DEFAULT_PROBES.type2 };
   return {
     id: "one-way-door",
     name: "One-way door",
@@ -114,6 +136,17 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
             why: "The model could not confidently size the blast radius of this change.",
             fix: "Request a human peer review, or document the decision in an ADR under `docs/decisions/`.",
           };
+      }
+    },
+    probes(v) {
+      switch (v.reason) {
+        case "type1_no_adr":
+        case "ambiguous":
+          return probes.type1;
+        case "type2_no_plan":
+          return probes.type2;
+        default:
+          return [];
       }
     },
     agent(v, rc) {
