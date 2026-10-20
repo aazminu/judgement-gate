@@ -85,7 +85,7 @@ describe("routing-only comment (nothing failed, routed to a human)", () => {
     judgement: { id: "other", name: "Other", remedy: () => ({ why: "SHOULD NOT SHOW", fix: "" }), probes: () => ["NOPE?"] } as any,
     verdict: { conclusion: "success", reason: "other_ok", summary: "ok", fired: false } as JudgementVerdict,
   };
-  const render = (routing: RoutingResult = human, all = [cleared, quiet, severity], mode = "enforce", routingMode?: string) =>
+  const render = (routing: RoutingResult = human, all = [cleared, quiet, severity], mode = "enforce", routingMode = mode) =>
     renderRoutingComment(routing, rc, mode, routingMode, all);
   const block = (md: string) => JSON.parse(/<!-- judgement-gate:v1 (\{.*\}) -->/.exec(md)![1]);
 

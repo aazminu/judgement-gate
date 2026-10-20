@@ -1,7 +1,7 @@
 import { parseFalsePositive, record } from "./analytics";
 import { aggregate, type JudgementResult } from "./aggregate";
 import { loadGateConfig } from "./config";
-import { renderComment } from "./comment";
+import { renderComment, renderRoutingComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
@@ -179,14 +179,18 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     routingNote = asNote(published.text);
 
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
+    // One comment per PR: the remediation comment when a judgement fails, else a short routing comment when a person must review it.
     let commentNote = "";
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
-    if (failing.length > 0) {
+    const rc = { owner, repo, headRef: ev.pull_request.head.sha };
+    const routedToHuman = failing.length === 0 && routing?.route === "human";
+    if (failing.length > 0 || routedToHuman) {
       try {
-        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing, results, routingMode));
+        const body = routedToHuman ? renderRoutingComment(routing!, rc, mode, routingMode, results) : renderComment(failing, rc, mode, routing, results, routingMode);
+        await gh.upsertComment(owner, repo, pr, body);
       } catch (e) {
         console.error("judgement-gate comment failed", e);
-        commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
+        commentNote = `\n\n_Could not post the ${routedToHuman ? "routing" : "remediation"} comment: ${(e as Error).message}_`;
       }
     }
     // A classifier's summary is its name and level, so the line shows the level alone.
