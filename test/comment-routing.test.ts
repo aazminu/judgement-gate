@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { renderComment } from "../src/comment";
-import { oneWayDoor } from "../src/judgements/one-way-door";
+import { renderComment, renderRoutingComment } from "../src/comment";
+import { COMMENT_MARKER } from "../src/github";
+import { DEFAULT_PROBES, oneWayDoor } from "../src/judgements/one-way-door";
 import type { RoutingResult } from "../src/routing";
 import type { JudgementVerdict } from "../src/types";
 
@@ -67,5 +68,78 @@ describe("visible routing line in the comment", () => {
     expect(visible(md)).toContain("**Review routing:**");
     const block = JSON.parse(/<!-- judgement-gate:v1 (\{.*\}) -->/.exec(md)![1]);
     expect(block.routing).toEqual({ route: "human", reasons: human.reasons, label: "needs-human-review" });
+  });
+});
+
+describe("routing-only comment (nothing failed, routed to a human)", () => {
+  const owd = oneWayDoor();
+  const cleared = {
+    judgement: owd,
+    verdict: { conclusion: "success", reason: "type1_adr", summary: "Type 1 verified with ADR", fired: true, signals: "Signals: x." } as JudgementVerdict,
+  };
+  const severity = {
+    judgement: { id: "severity", name: "Severity" } as any,
+    verdict: { conclusion: "success", reason: "p1", summary: "s", fired: false, classification: { level: "P1", confidence: 0.82 } } as JudgementVerdict,
+  };
+  const quiet = {
+    judgement: { id: "other", name: "Other", remedy: () => ({ why: "SHOULD NOT SHOW", fix: "" }), probes: () => ["NOPE?"] } as any,
+    verdict: { conclusion: "success", reason: "other_ok", summary: "ok", fired: false } as JudgementVerdict,
+  };
+  const render = (routing: RoutingResult = human, all = [cleared, quiet, severity], mode = "enforce", routingMode?: string) =>
+    renderRoutingComment(routing, rc, mode, routingMode, all);
+  const block = (md: string) => JSON.parse(/<!-- judgement-gate:v1 (\{.*\}) -->/.exec(md)![1]);
+
+  it("carries the marker so it edits the same comment, and a heading that says passed and routed to a human", () => {
+    const md = render();
+    expect(md.startsWith(COMMENT_MARKER)).toBe(true);
+    expect(md).toMatch(/### judgement-gate: passed the checks, routed to a human reviewer/);
+  });
+
+  it("shadow routing: heading and line do not claim a routing that did not happen", () => {
+    const md = render(human, [cleared], "enforce", "shadow");
+    expect(md).toContain("### judgement-gate: passed the checks, human review recommended");
+    expect(md).not.toContain("routed to a human reviewer");
+    expect(line(md)).toContain("shadow");
+    expect(line(md)).not.toContain("adds the");
+  });
+
+  it("shows the routing line, the severity line and the reasons", () => {
+    const md = render();
+    expect(line(md)).toContain("`one-way-door flagged`");
+    expect(md).toContain("**Severity:** P1 (confidence 0.82)");
+  });
+
+  it("explains a cleared judgement with its why and its probes as questions for the reviewer", () => {
+    const md = visible(render());
+    expect(md).toContain("#### One-way door");
+    expect(md).toContain("The ADR records the reasoning");
+    expect(md).toContain("**Questions a reviewer will ask:**");
+    expect(md).toContain(`- ${DEFAULT_PROBES.type1[0]}`);
+  });
+
+  it("leaves out judgements that did not fire, and says nothing about fixing", () => {
+    const md = visible(render());
+    expect(md).not.toContain("SHOULD NOT SHOW");
+    expect(md).not.toContain("NOPE?");
+    expect(md).not.toContain("**Fix:**");
+    expect(md).not.toContain("Not a real issue");
+  });
+
+  it("a route with no cleared judgement (files rule) has the line and no judgement section", () => {
+    const md = visible(render({ ...human, reasons: ["files: migrations/**"] }, [quiet]));
+    expect(line(md)).toContain("`files: migrations/**`");
+    expect(md).not.toContain("####");
+  });
+
+  it("the hidden block has failing [], the routing and the classification, schema 1", () => {
+    const b = block(render());
+    expect(b.schema).toBe(1);
+    expect(b.failing).toEqual([]);
+    expect(b.routing).toEqual({ route: "human", reasons: human.reasons, label: "needs-human-review" });
+    expect(b.classification).toEqual([{ id: "severity", level: "P1", confidence: 0.82 }]);
+  });
+
+  it("no classifier: no classification key", () => {
+    expect(block(render(human, [cleared])).classification).toBeUndefined();
   });
 });
