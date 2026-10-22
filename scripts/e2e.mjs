@@ -128,9 +128,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const sign = (payload) => "sha256=" + crypto.createHmac("sha256", WEBHOOK_SECRET).update(payload).digest("hex");
 
-function webhook(scenario, pr, sha) {
+function webhook(scenario, pr, sha, previousBody) {
   return JSON.stringify({
-    action: "opened",
+    action: previousBody === undefined ? "opened" : "edited",
+    ...(previousBody !== undefined && { changes: { body: { from: previousBody } } }),
     installation: { id: 1 },
     repository: { name: "demo", owner: { login: "acme" } },
     pull_request: { number: pr, title: scenario.title, body: scenario.body, draft: false, base: { ref: "main" }, head: { sha } },
@@ -240,6 +241,45 @@ const CASES = [
       agent(e, r);
       e.eq("block failing[0].probes.length", r.block?.failing?.[0]?.probes?.length, 3);
       e.eq("block routing.route", r.block?.routing?.route, "agent");
+    },
+  },
+  {
+    name: "R1 same PR passes after adding a reversal plan",
+    scenario: 3,
+    reusePr: true,
+    check(e, r, previous) {
+      e.eq("conclusion", r.check.conclusion, "success");
+      agent(e, r);
+      oneComment(e, r);
+      e.eq("comment ids", r.commentIds, previous.commentIds);
+      e.has("comment", r.comments[0], "all applicable judgements passed");
+      e.lacks("comment", r.comments[0], "**Fix:**");
+      e.lacks("comment", r.comments[0], "type2_no_plan");
+      e.eq("block failing", r.block?.failing, []);
+      e.eq("block routing.route", r.block?.routing?.route, "agent");
+    },
+  },
+  {
+    name: "R2 repeated pass keeps the same passing comment",
+    scenario: 3,
+    reusePr: true,
+    check(e, r, previous) {
+      e.eq("conclusion", r.check.conclusion, "success");
+      oneComment(e, r);
+      e.eq("comment ids", r.commentIds, previous.commentIds);
+      e.eq("comments", r.comments, previous.comments);
+    },
+  },
+  {
+    name: "R3 same PR fails again after removing the reversal plan",
+    scenario: 4,
+    reusePr: true,
+    check(e, r, previous) {
+      e.eq("conclusion", r.check.conclusion, "failure");
+      oneComment(e, r);
+      e.eq("comment ids", r.commentIds, previous.commentIds);
+      e.has("comment", r.comments[0], "**Fix:**");
+      e.eq("block failing[0].reason", r.block?.failing?.[0]?.reason, "type2_no_plan");
     },
   },
   {
@@ -410,15 +450,17 @@ async function main() {
   }
 
   let pr = 100;
+  let previous;
+  let previousScenario;
   for (const c of CASES) {
     const e = new Expect();
     const scenario = SCENARIOS[c.scenario];
     const sha = crypto.randomBytes(20).toString("hex");
-    pr += 1;
+    if (!c.reusePr) pr += 1;
     await post(`${gh}/__register`, { pr, files: scenario.files });
     await post(`${jev}/__control`, { mode: c.mode ?? "ok", answers: scenario.jev });
 
-    const payload = webhook(scenario, pr, sha);
+    const payload = webhook(scenario, pr, sha, c.reusePr ? previousScenario.body : undefined);
     const res = await fetch(`${worker}/webhook`, {
       method: "POST",
       headers: { "X-GitHub-Event": "pull_request", "X-Hub-Signature-256": sign(payload), "Content-Type": "application/json" },
@@ -440,8 +482,11 @@ async function main() {
       continue;
     }
     const comments = rec.comments[pr] ?? [];
-    const r = { check, labels: rec.labels[pr] ?? [], comments, block: parseBlock(comments[0]) };
-    c.check(e, r);
+    const storedComments = await (await fetch(`${gh}/repos/acme/demo/issues/${pr}/comments`)).json();
+    const r = { check, labels: rec.labels[pr] ?? [], comments, commentIds: storedComments.map((c) => c.id), block: parseBlock(comments[0]) };
+    c.check(e, r, previous);
+    previous = r;
+    previousScenario = scenario;
     record(c.name, e.failures, `        check: ${check.conclusion} | ${check.title}\n${check.summary.split("\n").map((l) => "          | " + l).join("\n")}`);
   }
 
