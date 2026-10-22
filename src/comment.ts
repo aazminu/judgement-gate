@@ -73,7 +73,7 @@ function headerLines(classified: JudgementResult[], routing: RoutingResult | und
 
 /**
  * One comment for the PR: a teaching section (why + fix) per failing judgement. `all` is every result; classifiers
- * (severity) among them are reported alongside, never as a reason to post.
+ * (severity) among them are reported alongside, never as a reason to post. With no failures, render a passing note.
  */
 export function renderComment(
   failing: JudgementResult[],
@@ -86,7 +86,7 @@ export function renderComment(
   const classified = all.filter((r) => r.verdict.classification);
   const header = headerLines(classified, routing, routingMode);
   const heading =
-    failing.length === 1 ? failing[0].verdict.summary : `${failing.length} judgements need attention`;
+    failing.length === 0 ? "all applicable judgements passed" : failing.length === 1 ? failing[0].verdict.summary : `${failing.length} judgements need attention`;
   const sections = failing.map(({ judgement, verdict }) => {
     const r = judgement.remedy(verdict, rc);
     const parts = [`#### ${judgement.name}`, "", `**Why:** ${r.why}`, "", "**Fix:**", "", r.fix];

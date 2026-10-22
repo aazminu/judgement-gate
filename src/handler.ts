@@ -179,19 +179,17 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     routingNote = asNote(published.text);
 
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
-    // One comment per PR: the remediation comment when a judgement fails, else a short routing comment when a person must review it.
+    // One comment per PR: remediation, human routing, or an update-only passing note.
     let commentNote = "";
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
     const rc = { owner, repo, headRef: ev.pull_request.head.sha };
     const routedToHuman = failing.length === 0 && routing?.route === "human";
-    if (failing.length > 0 || routedToHuman) {
-      try {
-        const body = routedToHuman ? renderRoutingComment(routing!, rc, mode, routingMode, results) : renderComment(failing, rc, mode, routing, results, routingMode);
-        await gh.upsertComment(owner, repo, pr, body);
-      } catch (e) {
-        console.error("judgement-gate comment failed", e);
-        commentNote = `\n\n_Could not post the ${routedToHuman ? "routing" : "remediation"} comment: ${(e as Error).message}_`;
-      }
+    try {
+      const body = routedToHuman ? renderRoutingComment(routing!, rc, mode, routingMode, results) : renderComment(failing, rc, mode, routing, results, routingMode);
+      await gh.upsertComment(owner, repo, pr, body, { createIfMissing: failing.length > 0 || routedToHuman });
+    } catch (e) {
+      console.error("judgement-gate comment failed", e);
+      commentNote = `\n\n_Could not post the ${routedToHuman ? "routing" : failing.length > 0 ? "remediation" : "passing"} comment: ${(e as Error).message}_`;
     }
     // A classifier's summary is its name and level, so the line shows the level alone.
     const lines = results.map((r) => {

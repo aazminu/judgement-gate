@@ -34,7 +34,7 @@ Built-in `one-way-door`: `type1_no_adr` → `file_added` `docs/decisions/*.md`; 
 
 ## Routing
 
-`routing` is added to every comment the gate posts. That is the remediation comment (at least one judgement failed) and the routing comment for a PR that passed every judgement but is routed to a human. A PR routed to an agent with nothing failing gets no comment and so no block; its routing is in the check summary. The schema number stays at 1 because the field is additive.
+`routing` is added to every comment the gate posts. That is the remediation comment (at least one judgement failed) and the routing comment for a PR that passed every judgement but is routed to a human. A PR routed to an agent with nothing failing gets no new comment. An existing gate comment is updated to a passing note, with `failing: []` and the current routing in its block; the routing is also in the check summary. The schema number stays at 1 because the field is additive.
 
 In the routing comment `failing` is `[]` (nothing to fix), `routing.route` is `human`, and `classification` is present as usual. `failing` being empty with `routing.route` `human` is how you tell it apart from a remediation comment. The visible text names the cleared judgements and lists questions for the human reviewer; the block does not repeat them. It replaces any earlier failing comment on the same PR, so after a push that fixes everything you may see this block where the failing one was. Nothing for you to fix then: a person reviews.
 
@@ -44,7 +44,7 @@ If `route` is `human`, clearing a failure does not remove the need for a human. 
 
 ## Classification
 
-`classification` is added when a judgement that labels the PR (for example `severity`) reported a level. Like `routing`, it appears in any comment the gate posts, that is when a judgement failed or the PR is routed to a human; a PR with nothing failing that routes to an agent gets no comment. Schema stays at 1: the field is additive and absent when no classifier reported a level.
+`classification` is added when a judgement that labels the PR (for example `severity`) reported a level. Like `routing`, it appears in any comment the gate posts, including an existing comment updated to a passing note. A PR with nothing failing that routes to an agent gets no new comment. Schema stays at 1: the field is additive and absent when no classifier reported a level.
 
 ```json
 "classification": [{ "id": "severity", "level": "P1", "confidence": 0.82 }]
@@ -60,7 +60,7 @@ It is information only. A classifier never appears in `failing`, has nothing to 
 
 ## How an agent should react
 
-1. Read the gate's comment on your PR and parse the block. If `failing` is empty and `routing.route` is `human`, nothing is left to fix: the PR passed and a person will review it. Put what that person should look at in the PR description.
+1. Read the gate's comment on your PR and parse the block. If `failing` is empty, nothing is left to fix. When `routing.route` is `human`, a person will review the PR; put what that person should look at in the PR description.
 2. For each failing judgement, pick one `satisfied_by` entry. If `suggested_template` fits, fill in the `<placeholders>` with real content (do not leave them in) and either update the PR body or commit the file at `path`. If `probes` is not empty, address each question in the ADR or plan you write, with real content that is true of the change.
 3. Push or edit; the gate re-runs and edits the same comment in place.
 4. If the judgement is wrong for this change, do not game it. Ask a human to reply `/judgement-gate false-positive <id>`.

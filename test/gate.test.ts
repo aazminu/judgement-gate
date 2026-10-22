@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { verifySignature } from "../src/crypto";
 import { handleWebhook, processPullRequest } from "../src/handler";
-import { buildPatchExtract, clearInstallationTokenCache, installationToken } from "../src/github";
+import { buildPatchExtract, clearInstallationTokenCache, COMMENT_MARKER, installationToken } from "../src/github";
 import { evaluatePolicy } from "../src/policy";
 import type { Env, JevResult, PullRequestEvent } from "../src/types";
 
@@ -112,10 +112,11 @@ function jevAnswer(o: { one: number; add: number; rev: number; cls: string; conf
   };
 }
 
-/** Fake GitHub + Jev. Records calls and holds existing PR comments. */
+/** Fake GitHub + Jev. Records calls and persists comment writes across evaluations. */
 function fakeNet(jev: () => Response | Promise<Response>, existingComments: { id: number; body: string }[] = []) {
   const calls: { method: string; url: string; body?: any }[] = [];
-  const comments = [...existingComments];
+  const comments = existingComments.map((comment) => ({ ...comment }));
+  let nextCommentId = Math.max(0, ...comments.map((comment) => comment.id)) + 1;
   const fetchFn = (async (input: any, init: any = {}) => {
     const url = String(input);
     const method = init.method ?? "GET";
@@ -128,11 +129,20 @@ function fakeNet(jev: () => Response | Promise<Response>, existingComments: { id
     if (url.includes("/check-runs/55")) return json({});
     if (url.includes("/pulls/7/files")) return json([{ filename: "src/a.ts", status: "modified", patch: "+x" }]);
     if (url.includes("/issues/7/comments") && method === "GET") return json(comments);
-    if (url.includes("/issues/7/comments") && method === "POST") return json({ id: 1 }, 201);
-    if (url.includes("/issues/comments/")) return json({});
+    if (url.includes("/issues/7/comments") && method === "POST") {
+      const comment = { id: nextCommentId++, body: body.body };
+      comments.push(comment);
+      return json(comment, 201);
+    }
+    if (url.includes("/issues/comments/") && method === "PATCH") {
+      const comment = comments.find((c) => url.endsWith(`/issues/comments/${c.id}`));
+      if (!comment) return json({ error: "comment not found" }, 404);
+      comment.body = body.body;
+      return json(comment);
+    }
     return json({ error: "unexpected " + url }, 500);
   }) as typeof fetch;
-  return { calls, fetchFn };
+  return { calls, comments, fetchFn };
 }
 
 const finalCheck = (calls: any[]) => calls.filter((c) => c.method === "PATCH" && c.url.includes("/check-runs/55")).at(-1)?.body;
@@ -143,7 +153,8 @@ describe("end to end", () => {
     const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }))));
     await processPullRequest(prEvent(), env, net.fetchFn);
     expect(finalCheck(net.calls).conclusion).toBe("success");
-    expect(net.calls.some((c) => c.url.includes("/issues/7/comments"))).toBe(false);
+    expect(net.calls.some((c) => c.method !== "GET" && c.url.includes("/issues/7/comments"))).toBe(false);
+    expect(net.comments).toHaveLength(0);
   });
 
   it("type1 without ADR -> failure + one comment", async () => {
@@ -165,6 +176,148 @@ describe("end to end", () => {
     expect(net.calls.some((c) => c.method === "PATCH" && c.url.endsWith("/issues/comments/42"))).toBe(true);
   });
 
+  it("fail then pass on the same PR updates the existing remediation comment", async () => {
+    const env = await makeEnv({ CONFIG_REPO: "issue-4-config" });
+    let reversalProbability = 0.1;
+    const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({
+      one: 0.02, add: 0.9, rev: reversalProbability, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9,
+    }))));
+    // Missing optional config selects the built-in judgements and default agent routing for Type 2.
+    const fetchFn: typeof fetch = (input, init) =>
+      String(input) === "https://gh.test/repos/o/issue-4-config/contents/.github/judgement-gate.yml"
+        ? Promise.resolve(new Response("not found", { status: 404 }))
+        : net.fetchFn(input, init);
+    const event = prEvent();
+
+    const failed = await processPullRequest(event, env, fetchFn);
+    expect(failed.reason).toBe("type2_no_plan");
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(net.comments).toHaveLength(1);
+    const original = { ...net.comments[0] };
+    expect(original.body).toContain(COMMENT_MARKER);
+    expect(original.body).toContain("**Fix:**");
+
+    // The author edits the description; Jev now recognises a concrete reversal plan.
+    event.action = "edited";
+    event.changes = { body: { from: event.pull_request.body ?? "" } };
+    event.pull_request.body = "Reversal Trigger: error rate exceeds 2% for 5 minutes\nRollback Path: revert this PR";
+    reversalProbability = 0.9;
+    const passed = await processPullRequest(event, env, fetchFn);
+
+    expect(passed.reason).toBe("type2_ok");
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(finalCheck(net.calls).output.summary).toContain("Review routing: agent");
+    expect(net.comments).toHaveLength(1);
+    expect(net.comments[0].id).toBe(original.id);
+    expect(net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toHaveLength(1);
+    expect.soft(net.comments[0].body).not.toBe(original.body);
+    expect.soft(net.comments[0].body).toContain(COMMENT_MARKER);
+    expect.soft(net.comments[0].body).toMatch(/passed|verified/i);
+    expect.soft(net.comments[0].body).not.toContain("**Fix:**");
+    expect.soft(net.comments[0].body).not.toContain("type2_no_plan");
+    expect.soft(net.calls.filter((c) => c.method === "PATCH" && c.url.endsWith(`/issues/comments/${original.id}`))).toHaveLength(1);
+
+    const agentBlock = net.comments[0].body.match(/<!-- judgement-gate:v1 (\{.*\}) -->/);
+    expect(agentBlock).not.toBeNull();
+    expect(JSON.parse(agentBlock![1]).failing).toEqual([]);
+
+    // Re-evaluating the same passing PR does not write the unchanged note again.
+    await processPullRequest(event, env, fetchFn);
+    expect(net.calls.filter((c) => c.method === "PATCH" && c.url.endsWith(`/issues/comments/${original.id}`))).toHaveLength(1);
+
+    reversalProbability = 0.1;
+    event.pull_request.body = "no plan";
+    await processPullRequest(event, env, fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(net.comments).toEqual([original]);
+    expect(net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toHaveLength(1);
+  });
+
+  it.each(["GET", "PATCH"])("a passing comment %s failure keeps the successful verdict", async (method) => {
+    const env = await makeEnv();
+    const old = { id: 42, body: `${COMMENT_MARKER} old remediation` };
+    const net = fakeNet(
+      () => new Response(JSON.stringify(jevAnswer({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }))),
+      [old],
+    );
+    const fetchFn: typeof fetch = (input, init) =>
+      String(input).includes("/issues/") && (init?.method ?? "GET") === method
+        ? Promise.resolve(new Response("forbidden", { status: 403 }))
+        : net.fetchFn(input, init);
+    const verdict = await processPullRequest(prEvent(), env, fetchFn);
+    expect(verdict.reason).toBe("type2_ok");
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(finalCheck(net.calls).output.summary).toContain("Could not post the passing comment");
+    expect(net.comments).toEqual([old]);
+  });
+
+  it.each([false, true])("passing cleanup leaves unrelated comments untouched (gate comment present: %s)", async (hasGateComment) => {
+    const unrelated = { id: 10, body: "Please review the rollback instructions." };
+    const old = { id: 42, body: `${COMMENT_MARKER} old remediation` };
+    const net = fakeNet(
+      () => new Response(JSON.stringify(jevAnswer({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.9 }))),
+      hasGateComment ? [unrelated, old] : [unrelated],
+    );
+    await processPullRequest(prEvent(), await makeEnv(), net.fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(net.comments[0]).toEqual(unrelated);
+    expect(net.comments).toHaveLength(hasGateComment ? 2 : 1);
+    expect(net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toHaveLength(0);
+    const patches = net.calls.filter((c) => c.method === "PATCH" && c.url.includes("/issues/comments/"));
+    expect(patches).toHaveLength(hasGateComment ? 1 : 0);
+    if (hasGateComment) {
+      expect(patches[0].url).toMatch(/\/issues\/comments\/42$/);
+      expect(net.comments[1].body).toContain("all applicable judgements passed");
+    }
+  });
+
+  it("two failures then one then none update the same comment and clear its agent instructions", async () => {
+    const env = await makeEnv({ CONFIG_REPO: "issue-4-multiple" });
+    const config = `judgements:\n${["alpha", "beta"].map((id) => `
+  - id: ${id}
+    name: ${id}
+    question: "Does this change need a ${id} plan?"
+    true: "needs a plan"
+    false: "no plan needed"
+    threshold: 0.6
+    satisfied_by:
+      - pr_body_matches: "${id} plan"
+    why: "A plan makes this change safe."
+    fix: "Add the ${id} plan."
+`).join("")}`;
+    const net = fakeNet(() => new Response(JSON.stringify({ answers: { "alpha.q": { noul: 0.9 }, "beta.q": { noul: 0.9 } } })));
+    const fetchFn: typeof fetch = (input, init) =>
+      String(input) === "https://gh.test/repos/o/issue-4-multiple/contents/.github/judgement-gate.yml"
+        ? Promise.resolve(new Response(config))
+        : net.fetchFn(input, init);
+    const event = prEvent();
+    const failingIds = () => JSON.parse(net.comments[0].body.match(/<!-- judgement-gate:v1 (\{.*\}) -->/)![1]).failing.map((f: { id: string }) => f.id);
+
+    await processPullRequest(event, env, fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(failingIds()).toEqual(["alpha", "beta"]);
+    expect(net.comments[0].body).toContain("2 judgements need attention");
+    const id = net.comments[0].id;
+
+    event.pull_request.body = "alpha plan";
+    await processPullRequest(event, env, fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("failure");
+    expect(failingIds()).toEqual(["beta"]);
+    expect(net.comments[0].body).not.toContain("#### alpha");
+    expect(net.comments[0].body).toContain("#### beta");
+
+    event.pull_request.body = "alpha plan\nbeta plan";
+    await processPullRequest(event, env, fetchFn);
+    expect(finalCheck(net.calls).conclusion).toBe("success");
+    expect(failingIds()).toEqual([]);
+    expect(net.comments[0].body).toContain("all applicable judgements passed");
+    expect(net.comments[0].body).not.toContain("**Fix:**");
+    expect(net.comments).toHaveLength(1);
+    expect(net.comments[0].id).toBe(id);
+    expect(net.calls.filter((c) => c.method === "POST" && c.url.endsWith("/issues/7/comments"))).toHaveLength(1);
+    expect(net.calls.filter((c) => c.method === "PATCH" && c.url.endsWith(`/issues/comments/${id}`))).toHaveLength(2);
+  });
+
   it("comment failure keeps the real verdict", async () => {
     const env = await makeEnv();
     const net = fakeNet(() => new Response(JSON.stringify(jevAnswer({ one: 0.96, add: 0.1, rev: 0.1, cls: "TYPE_1_ONE_WAY_DOOR", conf: 0.8 }))));
@@ -182,14 +335,18 @@ describe("end to end", () => {
     await processPullRequest(prEvent(), env, net.fetchFn);
     expect(finalCheck(net.calls).conclusion).toBe("success");
     expect(finalCheck(net.calls).output.title).toContain("[Shadow]");
+    expect(net.comments[0].body).toContain("**Fix:**");
   });
 
   it("Jev outage -> neutral [Audit Degraded]", async () => {
     const env = await makeEnv();
-    const net = fakeNet(() => new Response("boom", { status: 503 }));
+    const old = { id: 42, body: `${COMMENT_MARKER} old remediation` };
+    const net = fakeNet(() => new Response("boom", { status: 503 }), [old]);
     const v = await processPullRequest(prEvent(), env, net.fetchFn);
     expect(v.reason).toBe("degraded");
     expect(finalCheck(net.calls).conclusion).toBe("neutral");
+    expect(net.comments).toEqual([old]);
+    expect(net.calls.some((c) => c.url.includes("/issues/"))).toBe(false);
   });
 
   it("Jev timeout -> neutral", async () => {
