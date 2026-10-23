@@ -1,7 +1,7 @@
 import { parseFalsePositive, record } from "./analytics";
 import { aggregate, type JudgementResult } from "./aggregate";
 import { loadGateConfig } from "./config";
-import { renderComment } from "./comment";
+import { renderComment, renderRoutingComment } from "./comment";
 import { verifySignature } from "./crypto";
 import { assembleContext, GitHubClient, installationToken } from "./github";
 import { evaluate } from "./jev";
@@ -179,15 +179,17 @@ export async function processPullRequest(ev: PullRequestEvent, env: Env, fetchFn
     routingNote = asNote(published.text);
 
     // The comment is best-effort: failing to post it must not hide a verdict we already computed.
+    // One comment per PR: remediation, human routing, or an update-only passing note.
     let commentNote = "";
     const failing = results.filter((r) => r.verdict.conclusion === "failure");
-    if (failing.length > 0) {
-      try {
-        await gh.upsertComment(owner, repo, pr, renderComment(failing, { owner, repo, headRef: ev.pull_request.head.sha }, mode, routing, results, routingMode));
-      } catch (e) {
-        console.error("judgement-gate comment failed", e);
-        commentNote = `\n\n_Could not post the remediation comment: ${(e as Error).message}_`;
-      }
+    const rc = { owner, repo, headRef: ev.pull_request.head.sha };
+    const routedToHuman = failing.length === 0 && routing?.route === "human";
+    try {
+      const body = routedToHuman ? renderRoutingComment(routing!, rc, mode, routingMode, results) : renderComment(failing, rc, mode, routing, results, routingMode);
+      await gh.upsertComment(owner, repo, pr, body, { createIfMissing: failing.length > 0 || routedToHuman });
+    } catch (e) {
+      console.error("judgement-gate comment failed", e);
+      commentNote = `\n\n_Could not post the ${routedToHuman ? "routing" : failing.length > 0 ? "remediation" : "passing"} comment: ${(e as Error).message}_`;
     }
     // A classifier's summary is its name and level, so the line shows the level alone.
     const lines = results.map((r) => {

@@ -17,7 +17,7 @@ A judgement is what the gate asks about a change. The Worker sends every applica
 | `why`, `fix` | The remedy shown to the author: why it matters, and what to do. |
 | `probes` | Optional. Short questions shown to the author as "Questions a reviewer will ask". On a declarative judgement: a list of questions. On `use: one-way-door`: a mapping with `type1` and/or `type2`, each a list of questions. At most 7 questions per list, each at most 300 characters. Static text; no model call. |
 
-The built-in `one-way-door` ships default probes for type 1 and type 2 verdicts, and an `ambiguous` verdict shows the type 1 list. Setting `probes.type1` or `probes.type2` replaces only that list. A declarative judgement with no `probes` shows none.
+The built-in `one-way-door` ships default probes for type 1 and type 2 verdicts, and an `ambiguous` verdict shows the type 1 list. A Type 1 change cleared by an ADR (`type1_adr`) shows the type 1 list too, in the comment for a PR routed to a human, where the questions are for the human reviewer. Setting `probes.type1` or `probes.type2` replaces only that list. A declarative judgement with no `probes` shows none.
 
 Severity is a different kind of entry, with `classify:` instead of `question`/`true`/`false`; see [Severity](#severity).
 
@@ -62,7 +62,7 @@ The levels are a list so their order is explicit. `threshold`, `satisfied_by`, `
 **Where it shows up.**
 
 - The check summary has a line per judgement: `- pass: Severity (P1)`, or `- pass: Severity (no level reported)`. With severity as the only judgement the check title is `Severity: P1`.
-- The remediation comment gets a `**Severity:** P1 (confidence 0.82)` line, **only when a comment is already posted for a failing judgement**. Severity alone never causes a comment.
+- The remediation comment gets a `**Severity:** P1 (confidence 0.82)` line, **only when a comment is already posted for a failing judgement**. Severity alone never causes a comment (a comment for a PR routed to a human, described under Review routing, shows it too).
 - The hidden agent block gets an additive `classification` field ([docs/agents.md](agents.md#classification)).
 - Analytics: an `evaluation` row for the id with outcome `passed`, the reason `<id>_classified` or `<id>_unreported`, the confidence in `double4`, and the level in `blob8` ([calibration.md](calibration.md)).
 
@@ -93,7 +93,7 @@ routing:
 | `label` | The PR label added for a `human` result. Non-empty, at most 50 characters. Default `needs-human-review`. |
 | `human_when` | A list. Entries are OR'd: any match routes to a human. Each entry has exactly one of the forms below. |
 
-Where the result shows: the check summary always has a `Review routing:` line. A remediation comment (posted only when a judgement fails) also has a `**Review routing:**` line under the heading, naming the rules that matched in code spans; in shadow routing mode it says no label is added. The hidden agent block carries the same result as `routing`. A PR that passes every judgement but routes to a human gets the label (enforce mode) and the summary line, but no comment.
+Where the result shows: the check summary always has a `Review routing:` line. A remediation comment (posted only when a judgement fails) also has a `**Review routing:**` line under the heading, naming the rules that matched in code spans; in shadow routing mode it says no label is added. The hidden agent block carries the same result as `routing`. A PR that passes every judgement but routes to a human gets the label (enforce mode), the summary line **and a short comment** in the same place as the remediation comment (same marker, edited in place, so it replaces a failing comment from an earlier push). The comment has a heading saying the PR passed and is routed to a human reviewer, the `**Review routing:**` line, any severity line, and, for each judgement that fired and was cleared, its `why` and its `probes` as questions for the human reviewer. In shadow routing mode it is still posted and says the human review is recommended and no label is added. When all applicable judgements pass with an `agent` or `unavailable` routing result, an existing gate comment is updated to a short passing note, including current severity and routing information and an empty `failing` list in the hidden block. No new comment is created for that passing note. A degraded audit leaves an existing comment unchanged. A failure to post the comment adds a note to the check summary and never changes the check.
 
 `human_when` entry forms:
 

@@ -86,6 +86,14 @@ describe("one-way-door judgement", () => {
     expect(r2.fix).toContain("Reversal Trigger:");
     expect(r2.fix).toContain("Rollback Path:");
   });
+  it("type1_adr remedy explains why a person still reviews it, not the ambiguous text", () => {
+    const rc = { owner: "o", repo: "r", headRef: "abc" };
+    const v = j.decide(type1, pr([{ filename: "docs/decisions/0001-x.md", status: "added" }]));
+    const r = j.remedy(v, rc);
+    expect(r.why).toContain("one-way door");
+    expect(r.why).toContain("ADR");
+    expect(r.why).not.toContain("could not confidently");
+  });
   it("carries appliesTo", () => {
     expect(oneWayDoor({ appliesTo: ["db/**"] }).appliesTo).toEqual(["db/**"]);
   });
@@ -110,6 +118,11 @@ describe("one-way-door probes", () => {
     const low = answers({ one: 0.02, add: 0.9, rev: 0.9, cls: "TYPE_2_TWO_WAY_DOOR", conf: 0.5 });
     const v = j.decide(low, pr());
     expect(v.reason).toBe("ambiguous");
+    expect(j.probes!(v)).toEqual(DEFAULT_PROBES.type1);
+  });
+  it("type1_adr (cleared) gets the type 1 probes, for the human reviewer", () => {
+    const v = j.decide(type1, pr([{ filename: "docs/decisions/0001-x.md", status: "added" }]));
+    expect(v.reason).toBe("type1_adr");
     expect(j.probes!(v)).toEqual(DEFAULT_PROBES.type1);
   });
   it("a passing verdict has no probes", () => {

@@ -113,14 +113,21 @@ export class GitHubClient {
     await this.req("POST", `/repos/${owner}/${repo}/issues/${pr}/labels`, { labels });
   }
 
-  /** Upsert the single bot comment, found by its hidden marker. */
-  async upsertComment(owner: string, repo: string, pr: number, body: string): Promise<"created" | "updated"> {
+  /** Upsert the single bot comment, found by its hidden marker. Passing notes only update an existing comment. */
+  async upsertComment(
+    owner: string,
+    repo: string,
+    pr: number,
+    body: string,
+    { createIfMissing = true } = {},
+  ): Promise<"created" | "updated" | "skipped"> {
     const comments = await this.req<{ id: number; body: string }[]>("GET", `/repos/${owner}/${repo}/issues/${pr}/comments?per_page=100`);
     const existing = comments.find((c) => c.body.includes(COMMENT_MARKER));
     if (existing) {
       if (existing.body !== body) await this.req("PATCH", `/repos/${owner}/${repo}/issues/comments/${existing.id}`, { body });
       return "updated";
     }
+    if (!createIfMissing) return "skipped";
     await this.req("POST", `/repos/${owner}/${repo}/issues/${pr}/comments`, { body });
     return "created";
   }

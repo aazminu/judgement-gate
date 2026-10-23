@@ -114,6 +114,12 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
     },
     remedy(v, rc) {
       switch (v.reason) {
+        case "type1_adr":
+          // Not a failure: shown when the PR passed but a person still reviews it.
+          return {
+            why: "The change looks like a one-way door (schema, auth or infrastructure), so it is hard to undo. The ADR records the reasoning, but a person who is accountable for the decision still reviews it.",
+            fix: "Nothing to fix. A reviewer will read the ADR and check the rollback limits it names.",
+          };
         case "type1_no_adr":
           return {
             why: "The change looks like a one-way door (schema, auth or infrastructure). Once it ships it is hard to undo, so the reasoning behind it must be recorded where the next person will find it.",
@@ -142,6 +148,7 @@ export function oneWayDoor(opts: OneWayDoorOptions = {}): Judgement {
     },
     probes(v) {
       switch (v.reason) {
+        case "type1_adr":
         case "type1_no_adr":
         case "ambiguous":
           return [...probes.type1];
